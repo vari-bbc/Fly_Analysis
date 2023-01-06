@@ -1,10 +1,26 @@
 ---
-title: "Flies: Everything V3"
+title: "Flies: Everything V5"
 output:
   html_document:
+    self_contained: yes
     toc: yes
     toc_float: no
 ---
+
+```{r, include=FALSE}
+
+#Some general options
+
+#Compare against control or all comparisons? Comment out the one does not apply
+
+#To control
+f = as.formula("trt.vs.ctrl~Group")
+
+#All pairwise
+# f = as.formula("pairwise~Group")
+
+```
+
 
 
 ```{r, include=FALSE}
@@ -45,7 +61,7 @@ library(pheatmap)
 options(scipen=999)
 
 
-opts_chunk$set(echo=FALSE, fig.align='center', warning=FALSE, message=FALSE, dev=c('png','cairo_pdf'), cache=FALSE,error=FALSE,fig.width=8,fig.height=10)
+opts_chunk$set(echo=FALSE, fig.align='center', warning=FALSE, message=FALSE, dev=c('png','cairo_pdf','tiff','jpeg'), cache=FALSE,error=FALSE,fig.width=8,fig.height=10)
 
 substrRight <- function(x, n){
   substr(x, nchar(x)-n+1, nchar(x))
@@ -110,12 +126,9 @@ p_val_heatmap = function(heat.df){
     
   }
   
-  breaks = c(seq(0,0.1,0.01),0.25,0.5,0.75,seq(0.9,1,0.01))
+  breaks = seq(0,1,0.05)
 
-  mycols = c(colorRampPalette(c("darkred","red","white"))(length(c(seq(0,0.1,0.01),0.25))),"white",
-           colorRampPalette(c("white","grey","black"))(length(c(0.75,seq(0.9,1,0.01)))))
-
-  
+  mycols = colorRampPalette(c("darkred","white","black"))(length(breaks)-2)
 
   print(pheatmap(heat.df, cluster_rows = F,cluster_cols = F, annotation_col = annotate, annotation_colors =anno_colors, color=mycols,breaks=breaks))
   
@@ -161,6 +174,85 @@ eff_heatmap = function(heat.df){
 
 
 
+
+
+sig_heatmap = function(heat.df){
+  
+  if(ncol(heat.df)/3>=2) {
+    annotate = data.frame(Out = substr(colnames(heat.df),1,nchar(colnames(heat.df))-1), Amount = factor(substrRight(colnames(heat.df),1),levels=c("L","M","H")))
+    rownames(annotate) = colnames(heat.df)
+    Var1        = viridis::viridis(ncol(heat.df)/3)
+    names(Var1) = c(unique(annotate$Out))
+    
+    
+    Var2        =  rev(viridis::mako(3))
+    names(Var2) = c(unique(annotate$Amount))
+    
+    anno_colors = list(Out = Var1,Amount=Var2)
+
+  } else {
+    
+     annotate = data.frame(Amount = factor(substrRight(colnames(heat.df),1),levels=c("L","M","H")))
+    rownames(annotate) = colnames(heat.df)
+
+    Var1        =  rev(viridis::mako(3))
+    names(Var1) = c(unique(annotate$Amount))
+    
+    anno_colors = list(Amount=Var1)
+
+    
+  }
+  
+  breaks = c(-1,-.75,-.5,0,.5,.75,1)
+
+  mycols = c("blue","blue","black","black","red","red")
+  
+  # print(pheatmap(heat.df, cluster_rows = F,cluster_cols = F, annotation_col = annotate, annotation_colors =anno_colors, color=mycols,breaks=breaks,na_col="white"))
+  
+  heat.df.gg = heat.df
+  
+  heat.df.gg$Compound = rownames(heat.df.gg)
+  heat.m = reshape2::melt(heat.df.gg,id.vars=c("Compound"))
+  
+  heat.m$Result = case_when(
+    heat.m$value == -1 ~ "Sig Decrease",
+    heat.m$value == 1 ~ "Sig Increase",
+    heat.m$value == 0 ~ "Equivalent",
+    TRUE ~ "Inconclusive"
+    
+  )
+  
+  heat.m$Outcome = gsub("\\..*","",heat.m$variable)
+  
+  if(all(! is.na(as.numeric(substr(heat.m$Outcome,1,1))))){
+    
+    heat.m$Outcome = factor(heat.m$Outcome,levels=unique(heat.m$Outcome)[order(as.numeric(gsub("[^0-9.-]","",unique(heat.m$Outcome))))])
+  }
+  
+  heat.m$Amount = gsub(".*\\.","",heat.m$variable)
+  heat.m$Concentration = case_when(
+    heat.m$Amount == "L" ~ "Low",
+    heat.m$Amount == "M" ~ "Mid",
+    heat.m$Amount == "H" ~ "High",
+  )
+  
+  
+  heat.m$Concentration = factor(heat.m$Concentration,c("Low","Mid","High"))
+    
+   print(ggplot(heat.m,aes(x=Concentration,y=Compound,fill=Result))+
+    facet_wrap(~Outcome)+
+    geom_tile(color="black") + theme_classic() + xlab("") + ylab("") +
+    scale_fill_manual(values = c("Equivalent" = "black","Inconclusive" = "white", "Sig Increase" = "Red", "Sig Decrease" = "blue"))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank())
+    
+)
+  
+  
+}
+
+
 ```
 
 # Data file {.tabset}
@@ -186,7 +278,7 @@ for(i in all.files[grepl( "TG", all.files, fixed = TRUE)]){
   ix = which(tolower(df1$Toxin) == "female" | tolower(df1$Toxin) == "females",arr.ind=T)
   
   if(length(ix)>0){
-    df1 = df[1:ix-1,]
+    df1 = df1[1:ix-1,]
   }
   
   df1 = df1[df1$Rep != "Average",]
@@ -231,20 +323,60 @@ df.m$Group = factor(df.m$Group,levels=unique(df.m$Group))
 
 ```
 
-### Exploratory Plots
+### Exploratory Plots {.tabset}
 
-```{r , fig.width= length(unique(df.m$Group))/6 ,fig.height = length(unique(df.m$variable))*3}
+#### All data
+
+```{r TG_Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
 
 
 ##Code chunk for plots
 knitr::kable(table(df$Compound))
 
 ## Simple dot plot of all the data
-ggplot(na.omit(df.m),aes(x=Group,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free_y",ncol=1)+xlab("")+theme(strip.background = element_blank())
+ggplot(na.omit(df.m),aes(x=Group,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
+
+
 
 ## Simple bar plot of all the data
-agg.d = aggregate(value~Group+variable,df.m,mean)
-ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+   scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free_y",ncol=1)+xlab("")+theme(strip.background = element_blank())
+agg.d = aggregate(value~Group+variable,df.m,median)
+agg.d$gini = aggregate(value~Group+variable,df.m,Hmisc::GiniMd)$value
+
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+ 
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+```{r TG_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height = length(unique(df.m$variable))*3.5}
+agg.d2 = aggregate(value~Group+variable+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+  
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+   
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+  
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r TG_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
+
+
 ```
 
 
@@ -262,9 +394,9 @@ eff.all=NULL
 
 for(i in unique(df.m$Compound)){
   fit = rlmer(log(value)~Group+(1|Set),data=df.m[df.m$variable == 'weight of 1 fly (g)'&df.m$Compound==i,])
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -273,21 +405,21 @@ for(i in unique(df.m$Compound)){
     inf.correction = 1e-05,
     warnings = TRUE
   )$p.delta
-  
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.m = res[,c(1,7)]
   colnames(res.m)[2] = "Weight of 1 fly (g)"
-  
+
   eff.m = res[,c(1,2)]
   colnames(eff.m)[2] = "Weight of 1 fly (g)"
-  
+
   fit = rlmer(log2(value)~Group+(1|Set),data=df.m[df.m$variable == 'OD/weight as % of control'&df.m$Compound==i,])
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -296,22 +428,22 @@ for(i in unique(df.m$Compound)){
     inf.correction = 1e-05,
     warnings = TRUE
   )$p.delta
-  
+
   # res$estimate = 2^(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
-  
+
+
   res.t=res[,c(1,7)]
   colnames(res.t)[2] = "OD/weight as % of control"
-  
+
   eff.t = res[,c(1,2)]
   colnames(eff.t)[2] = "OD/weight as % of control"
-  
+
   fit = rlmer(log2(value)~Group+(1|Set),data=df.m[df.m$variable == 'OD/#flies as % of control' &df.m$Compound==i,])
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -320,26 +452,26 @@ for(i in unique(df.m$Compound)){
     inf.correction = 1e-05,
     warnings = TRUE
   )$p.delta
-  
+
   # res$estimate = 2^(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.c=res[,c(1,7)]
   colnames(res.c)[2] = "OD/#flies as % of control"
-  
+
   eff.c = res[,c(1,2)]
   colnames(eff.c)[2] = "OD/#flies as % of control"
-  
+
   res.all=rbind(res.all,merge(merge(res.m,res.t),res.c))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.m,eff.t),eff.c))
-  
+
 }
 
-eff.all[2:ncol(eff.all)] = log2(eff.all[2:ncol(eff.all)])
 
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
+
 
 ```
 
@@ -348,29 +480,49 @@ knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 #### Second Generation P-val Heatmap
 
-```{r, fig.width=length(unique(df.m$variable)),fig.height=length(unique(df.m$Group))/9}
+```{r TG-Pvals, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 
 p_val_heatmap(format_heat(res.all))
+
 ```
 
 #### log2(fold-change) Heatmap
 
 
-```{r, fig.width=length(unique(df.m$variable))*2,fig.height=length(unique(df.m$Group))/9}
-
+```{r TG-FC, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 eff_heatmap(format_heat(eff.all))
 
 ```
 
+
+#### Signifcance Summary Heatmap
+
+```{r, fig.width=4.5+length(unique(df.m$variable)),fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)] 
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
+
+```
+
+
+
 ## Longevity {.tabset}
 
-```{r, fig.height=5,fig.width=12}
+```{r}
 
 df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "long", all.files, fixed = TRUE)|grepl( "Long", all.files, fixed = TRUE)]){
-  # 
+  #
   if(i ==  "Heavy metals and DBCM 2021/Longevity Blue.xlsx" ){
 
       df.t = as.data.frame(read_excel(i,sheet = 1,skip=0))
@@ -381,13 +533,13 @@ for(i in all.files[grepl( "long", all.files, fixed = TRUE)|grepl( "Long", all.fi
       R = df.t[1,3:ncol(df.t)]
       R=gsub("\\#","",R)
       df.t=df.t[-1,3:ncol(df.t)]
-      
+
       colnames(df.t)[2:ncol(df.t)] = gsub("\\..*","",colnames(df.t)[2:ncol(df.t)])
-      
+
       for(s in 2:ncol(df.t)){
         colnames(df.t)[s] = paste0(colnames(df.t)[s],".",R[s])
       }
-      
+
       df.t = reshape2::melt(df.t,id.vars=c("Age"))
       df.t=df.t[df.t$Age!="Age (days)",]
 
@@ -407,7 +559,7 @@ for(i in all.files[grepl( "long", all.files, fixed = TRUE)|grepl( "Long", all.fi
   } else {
 
     df.t = as.data.frame(read_excel(i,sheet = 1,skip=4))
-    
+
     colnames(df.t)[1:3] = c("Group","Conc","R")
     df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                          grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -416,31 +568,31 @@ for(i in all.files[grepl( "long", all.files, fixed = TRUE)|grepl( "Long", all.fi
                          grepl( "orange", i, fixed = TRUE)~"Orange",
                          grepl( "pink", i, fixed = TRUE)~"Pink",
                          TRUE~"Check"
-                         
-                         
+
+
     )
-    
+
     ix = which(tolower(df.t$Group) == "female" | tolower(df.t$Group) == "females",arr.ind=T)
-    
+
     if(length(ix)>0){
       df.t = df.t[1:ix-1,]
     }
-  
-    
-    
+
+
+
     df.t$Group = na.locf(df.t$Group, na.rm = FALSE)
-  
+
     df.t$Conc = na.locf(df.t$Conc, na.rm = FALSE)
     df.t$Conc[is.na(df.t$Conc)] = ""
-    
+
     df.t$Group = paste0(df.t$Group,df.t$Conc)
-  
+
     df.t$Compound = sub("/.*", "", i)
-    
+
     df.t = reshape2::melt(df.t,id.vars=c( "Set","Compound","Group","Conc","R"))
     df.t$variable = as.character(df.t$variable)
   }
-  
+
   df=rbind(df,df.t)
 
 }
@@ -514,18 +666,16 @@ for(i in unique(df.m$Compound)){
 
 #### Time until 50% Dead
 
-A complication of this method is that there are some time points where, for example one group was measured at day 38 and another at day 39.  This creates an immortal time bias scenario where, if controls were measured at 38 and a toxin at 39, there's a day where the toxin group cannot die; a difference could be driven entirely by this bias. To get around this we will pool consecutive days and then use a rank-based method (so day 38 and 39 would have the same rank). It's most important that this is done just within a toxin group (eg heavy metals), as data are analyzed by the overall toxin group/class. 
+A complication of this method is that there are some time points where, for example one group was measured at day 38 and another at day 39.  This creates an immortal time bias scenario where, if controls were measured at 38 and a toxin at 39, there's a day where the toxin group cannot die; a difference could be driven entirely by this bias. To get around this we will pool consecutive days and then use a rank-based method (so day 38 and 39 would have the same rank). It's most important that this is done just within a toxin group (eg heavy metals), as data are analyzed by the overall toxin group/class.
 
-```{r, fig.height=5.5,fig.width=17}
-
-
+```{r Longevity-50, fig.height=5.5,fig.width=5+length(unique(df.m$Group))/9.6}
 
 reps = df.m[df.m$R != "% survival" & df.m$R !="Total",]
 
 # table(reps$variable,reps$Compound)
 
 for(j in unique(reps$Compound)){
-  
+
   ix = which(abs(diff(unique(reps$variable[reps$Compound == j])))<=1)
   for(z in ix){
     replace = unique(reps$variable[reps$Compound == j])[z]
@@ -551,20 +701,50 @@ reps.50 = reps[reps$Percent<= 0.5,]
 reps.50 = reps.50[!duplicated(reps.50$ID),]
 reps.50$variable = as.numeric(reps.50$variable)
 
-agg.d = aggregate(variable~Group,reps.50,mean)
 
 ggplot(reps.50,aes(x=Group,y=variable,color=Group,shape=Set)) + geom_point()+theme_classic(14)+scale_fill_viridis_d()+theme_classic(14)+theme(axis.text.x = element_text(angle=90,hjust=1),legend.position = "none")+  scale_color_viridis(discrete=T)+ylab("Time until 50% Death")
 
-ggplot(agg.d,aes(x=Group,y=variable,fill=Group)) + geom_bar(stat="identity")+theme_classic(14)+scale_fill_viridis_d()+theme_classic(14)+theme(axis.text.x = element_text(angle=90,hjust=1),legend.position = "none")+  scale_color_viridis(discrete=T)+ylab("Time until 50% Death")
+agg.d = aggregate(variable~Group,reps.50,median)
+
+agg.d$gini = aggregate(variable~Group,reps.50,Hmisc::GiniMd)$variable
+
+ggplot(na.omit(agg.d),aes(x=Group,y=variable,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=variable,ymax=variable+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
 
 
 
+```{r Longevity_Exploratory_Facet_50, fig.width= 5 + (length(unique(reps.50$Compound))+length(unique(reps.50$variable)))/2,fig.height =3+ length(unique(reps.50$variable))}
+agg.d2 = aggregate(variable~Group+Compound,reps.50,median)
+agg.d2$gini = aggregate(variable~Group+Compound,reps.50,Hmisc::GiniMd)$variable
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable,ymax=variable,color=Group),width=.7)+
+  geom_jitter(data = na.omit(reps.50),aes(x=Group,y=variable,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable-gini,ymax=variable+gini,color=Group),width=.25)
+
+```
+
+
+##### Controls Only
+
+```{r Longevity_Exploratory_Ctrls_50, fig.width= 2 + (length(unique(reps.50$Compound))+length(unique(reps.50$variable)))/1.5 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(reps.50[reps.50$Group == "Control",]),aes(x=Compound,y=variable,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+
+
 #### Time until 90% Dead
 
-```{r, fig.height=5.5,fig.width=17}
+```{r Longevity-90, fig.height=5.5,fig.width=5+length(unique(df.m$Group))/9.6}
 
 reps = df.m[df.m$R != "% survival" & df.m$R !="Total",]
 
@@ -602,17 +782,50 @@ agg.d = aggregate(variable~Group,reps.90,mean)
 
 ggplot(reps.90,aes(x=Group,y=variable,color=Group,shape=Set)) + geom_point()+theme_classic(14)+scale_fill_viridis_d()+theme_classic(14)+theme(axis.text.x = element_text(angle=90,hjust=1),legend.position = "none")+  scale_color_viridis(discrete=T)+ylab("Time until >90% Death")
 
-ggplot(agg.d,aes(x=Group,y=variable,fill=Group)) + geom_bar(stat="identity")+theme_classic(14)+scale_fill_viridis_d()+theme_classic(14)+theme(axis.text.x = element_text(angle=90,hjust=1),legend.position = "none")+  scale_color_viridis(discrete=T)+ylab("Time until >90% Death")
+
+agg.d = aggregate(variable~Group,reps.90,median)
+
+agg.d$gini = aggregate(variable~Group,reps.90,Hmisc::GiniMd)$variable
+
+ggplot(na.omit(agg.d),aes(x=Group,y=variable,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=variable,ymax=variable+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
 
+
+
+```{r Longevity_Exploratory_Facet_90, fig.width= 5 + (length(unique(reps.90$Compound))+length(unique(reps.90$variable)))/2,fig.height =3+ length(unique(reps.90$variable))}
+agg.d2 = aggregate(variable~Group+Compound,reps.90,median)
+agg.d2$gini = aggregate(variable~Group+Compound,reps.90,Hmisc::GiniMd)$variable
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable,ymax=variable,color=Group),width=.7)+
+  geom_jitter(data = na.omit(reps.90),aes(x=Group,y=variable,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable-gini,ymax=variable+gini,color=Group),width=.25)
+
+```
+
+
+##### Controls Only
+
+```{r Longevity_Exploratory_Ctrls_90, fig.width= 2 + (length(unique(reps.90$Compound))+length(unique(reps.90$variable)))/1.5 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(reps.90[reps.90$Group == "Control",]),aes(x=Compound,y=variable,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+
 #### AUCs
 
-```{r, fig.height=5.5,fig.width=17}
+```{r Longevity-AUC, fig.height=5.5,fig.width=5+length(unique(df.m$Group))/9.6}
 
 library(DescTools)
-  
+
 reps$ID.2 = paste0(reps$Group,reps$Set,reps$R,reps$Compound)
 
 reps.auc = NULL
@@ -620,14 +833,47 @@ for(i in unique(reps$ID.2)){
   tmp = subset(reps[reps$ID.2 == i,][1,],select=c(Set,Compound,Group,Conc,R,Toxin,ID.2))
   tmp$AUC = AUC(reps[reps$ID.2 == i,]$variable,reps[reps$ID.2 == i,]$value)
   reps.auc = rbind(reps.auc,tmp)
-  
+
 }
 
-agg.d = aggregate(AUC~Group,reps.auc,mean)
+reps.auc$variable = reps.auc$AUC
+agg.d = aggregate(variable~Group,reps.auc,median)
 
-ggplot(agg.d,aes(x=Group,y=AUC,fill=Group)) + geom_bar(stat="identity")+theme_classic(14)+scale_fill_viridis_d()+theme_classic(14)+theme(axis.text.x = element_text(angle=90,hjust=1),legend.position = "none")+  scale_color_viridis(discrete=T)+ylab("AUC")
+agg.d$gini = aggregate(variable~Group,reps.auc,Hmisc::GiniMd)$variable
+
+ggplot(na.omit(agg.d),aes(x=Group,y=variable,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=variable,ymax=variable+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
 
 ```
+
+
+
+```{r Longevity_Exploratory_Facet_auc, fig.width= 5 + (length(unique(reps.auc$Compound)))/2,fig.height =3+ (length(unique(reps.auc$Compound)))}
+
+agg.d2 = aggregate(variable~Group+Compound,reps.auc,median)
+agg.d2$gini = aggregate(variable~Group+Compound,reps.auc,Hmisc::GiniMd)$variable
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable,ymax=variable,color=Group),width=.7)+
+  geom_jitter(data = na.omit(reps.auc),aes(x=Group,y=variable,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=variable-gini,ymax=variable+gini,color=Group),width=.25)
+
+```
+
+
+##### Controls Only
+
+```{r Longevity_Exploratory_Ctrls_auc, fig.width= 2 + length(unique(reps.auc$Compound)) ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(reps.auc[reps.auc$Group == "Control",]),aes(x=Compound,y=variable,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
 
 
 
@@ -635,7 +881,7 @@ ggplot(agg.d,aes(x=Group,y=AUC,fill=Group)) + geom_bar(stat="identity")+theme_cl
 
 #### Results
 
-There are many ways I could see these data being analyzed. Some obvious ones to me are time until 50% total survival and time until 90% death (100% could also make sense, but by going to 90% ie 14/15, we eliminate the cases where one outlying replicate happens to live for much longer by chance, 90% is a hedge). Area under the curves is another interesting one where it would effectively measure the density of deaths over time; a small AUC means flies died quickly, vs a higher AUC means they lived longer overall. One could try to do rate of death, but that will be a 3 or 4 parametric model which we don't have enough data to reliably fit). I've run 50% death, 90% death, and AUC to start but am happy to run others or modify these. The regression method is a cumulative-logit ordinal regression, a random effect was included to account for set (orange, pink, blue). Ordinal regression is similar to a Wilcoxon test, but with a few improvements. 
+There are many ways I could see these data being analyzed. Some obvious ones to me are time until 50% total survival and time until 90% death (100% could also make sense, but by going to 90% ie 14/15, we eliminate the cases where one outlying replicate happens to live for much longer by chance, 90% is a hedge). Area under the curves is another interesting one where it would effectively measure the density of deaths over time; a small AUC means flies died quickly, vs a higher AUC means they lived longer overall. One could try to do rate of death, but that will be a 3 or 4 parametric model which we don't have enough data to reliably fit). I've run 50% death, 90% death, and AUC to start but am happy to run others or modify these. The regression method is a cumulative-logit ordinal regression, a random effect was included to account for set (orange, pink, blue). Ordinal regression is similar to a Wilcoxon test, but with a few improvements.
 
 
 ```{r}
@@ -644,19 +890,18 @@ res.all=NULL
 eff.all=NULL
 
 for(i in unique(df.m$Compound)){
-  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){    
+  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){
     fit = clmm(as.factor(variable)~Group+(1|Set),data=reps.50[reps.50$Compound == i,])
   } else {
     fit = clm(as.factor(variable)~Group,data=reps.50[reps.50$Compound == i,])
   }
   
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -666,31 +911,31 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
-  
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.50 = res[,c(1,7)]
   colnames(res.50)[2] = "Time 50% Death"
 
   eff.50 = res[,c(1,2)]
   colnames(eff.50)[2] = "Time 50% Death"
-  
-  
-  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){    
+
+
+  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){
     fit = clmm(as.factor(variable)~Group+(1|Set),data=reps.90[reps.90$Compound == i,])
   } else {
     fit = clm(as.factor(variable)~Group,data=reps.90[reps.90$Compound == i,])
   }
-  
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
  if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -700,32 +945,32 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
- 
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.90 = res[,c(1,7)]
   colnames(res.90)[2] = "Time 90% Death"
 
   eff.90 = res[,c(1,2)]
   colnames(eff.90)[2] = "Time 90% Death"
-  
-  
-    
-  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){    
+
+
+
+  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){
     fit = clmm(as.factor(AUC)~Group+(1|Set),data=reps.auc[reps.auc$Compound == i,])
   } else {
     fit = clm(as.factor(AUC)~Group,data=reps.auc[reps.auc$Compound == i,])
   }
-  
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
  if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -735,20 +980,20 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
- 
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.auc = res[,c(1,7)]
   colnames(res.auc)[2] = "AUC"
 
   eff.auc = res[,c(1,2)]
   colnames(eff.auc)[2] = "AUC"
 
-  
+
   res.all=rbind(res.all,merge(merge(res.50,res.90,by="Comparison"),res.auc,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.50,eff.90,by="Comparison"),eff.auc,by="Comparison"))
 
 }
@@ -756,15 +1001,14 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 ### Results plots {.tabset}
 
 #### Second Generation P-val Heatmap
 
-```{r, fig.width=5,fig.height=12}
-
+```{r Long-Pval, fig.width=3+3,fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 
 ```
@@ -772,9 +1016,28 @@ p_val_heatmap(format_heat(res.all))
 #### log2(fold-change) Heatmap
 
 
-```{r, fig.width=5,fig.height=12}
+```{r Long-FC, fig.width=3+3,fig.height=4+length(unique(df.m$Group))/16.5}
 
 eff_heatmap(format_heat(eff.all))
+
+```
+
+
+
+#### Signifcance Summary Heatmap
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
 
 ```
 
@@ -789,14 +1052,14 @@ df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "Fecundity", all.files, fixed = TRUE)|grepl( "fecundity", all.files, fixed = TRUE)]){
-  
+
   ## This exception had to be hard-coded; something is slightly different with these two files
   if(i %in% c("Heavy metals and DBCM 2021/Fecundity Pink.xlsx","Heavy metals and DBCM 2021/Fecundity Blue.xlsx")){
     df.t = as.data.frame(read_excel(i,sheet = 1,skip=2)[,1:5])
   } else {
     df.t = as.data.frame(read_excel(i,sheet = 1,skip=3)[,1:5])
   }
-  
+
   colnames(df.t) = c("Group","Conc","R1","R2","R3")
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -806,27 +1069,27 @@ for(i in all.files[grepl( "Fecundity", all.files, fixed = TRUE)|grepl( "fecundit
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
+
   df.t$Group[df.t$Group == " "] = NA
   df.t$Group = na.locf(df.t$Group, na.rm = FALSE)
-  
+
   df.t$Conc[is.na(df.t$Conc)] = ""
-  
-  
-  
+
+
+
   df.t$Compound = sub("/.*", "", i)
-  
+
   df=rbind(df,df.t)
 
 }
 
   df$Conc = factor(tolower(df$Conc),levels=c("","low","med","high"),labels=c("","L","M","H"))
   df$Group = paste0(df$Group,df$Conc)
-  
-  
+
+
   df.m = reshape2::melt(df,id.vars=c("Group","Conc","Set","Compound"))
-  
-  
+
+
   df.m$Group = gsub(",","",df.m$Group)
   df.m$Group = gsub("\\(","",df.m$Group)
   df.m$Group = gsub("\\)","",df.m$Group)
@@ -836,26 +1099,60 @@ for(i in all.files[grepl( "Fecundity", all.files, fixed = TRUE)|grepl( "fecundit
   df.m$Group = factor(df.m$Group,levels=unique(df.m$Group))
 
   df.m = na.omit(df.m)
-  
+
 ```
 
 ### Exploratory Plots
 
-```{r ,fig.width= length(unique(df.m$Group))/7 ,fig.height = length(unique(df.m$variable))*2}
+```{r Fecundity_explore, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = 5.5}
+
 ##Code chunk for plots
 knitr::kable(table(df$Compound))
 
   ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set))+theme_classic(14)+theme(legend.position = "none")+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+ylab("Pupae Number")+theme(axis.text.x = element_text(angle=90,hjust=1))
 
-agg = aggregate(value~Group,df.m,"mean")
-ggplot(agg,aes(x=Group,y=value,fill=Group))+theme_classic(14)+theme(legend.position = "none")+geom_bar(stat="identity")+   scale_fill_viridis(discrete=T)+ylab("Mean Pupae Number")+theme(axis.text.x = element_text(angle=90,hjust=1))
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group,df.m,median)
+agg.d$gini = aggregate(value~Group,df.m,Hmisc::GiniMd)$value
+
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
 ```
 
 
-### Analysis 
+
+```{r Fecundity_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height =4 + length(unique(df.m$Compound))}
+agg.d2 = aggregate(value~Group+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+Compound,df.m,Hmisc::GiniMd)$value
 
 
-Negative binomial mixed-effects mode with a random intercept for set (blue, pink, orange). Tje random effect is included to account for relatedness within each set.  The choice for negative binomial regression is because these are count data.  
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+
+```
+
+
+### Controls Only
+
+```{r Fecundity_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 5}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+### Analysis
+
+
+Negative binomial mixed-effects mode with a random intercept for set (blue, pink, orange). Tje random effect is included to account for relatedness within each set.  The choice for negative binomial regression is because these are count data.
 
 
 ```{r}
@@ -864,13 +1161,13 @@ Negative binomial mixed-effects mode with a random intercept for set (blue, pink
 res.all=NULL
 eff.all=NULL
 for(i in unique(df.m$Compound)){
-  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){    
+  if(length(unique(df.m[df.m$Compound==i,]$Set))>1){
     fit = glmer.nb(value~Group+(1|Set),data=df.m[df.m$Compound==i,])
   } else {
     fit = MASS::glm.nb(value~Group,data=df.m[df.m$Compound==i,])
   }
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   res$SGPV = sgpvalue(
   est.lo=res$asymp.LCL,
   est.hi=res$asymp.UCL,
@@ -879,18 +1176,18 @@ for(i in unique(df.m$Compound)){
   inf.correction = 1e-05,
   warnings = TRUE
   )$p.delta
-  
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
-  
-  
+
+
+
   res.all = rbind(res.all,data.frame(Compound = i,res[,c(1,7)]))
-  
-  eff.all =  rbind(eff.all,data.frame(Compound = i,res[,c(1,7)]))
-    
-    
+
+  eff.all =  rbind(eff.all,data.frame(Compound = i,res[,c(1,2)]))
+
+
 }
 
 colnames(res.all)[3] = "Pupae Count"
@@ -901,14 +1198,14 @@ colnames(eff.all)[3] = "Pupae Count"
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 ### Results plots {.tabset}
 
 #### Second Generation P-val Heatmap
 
-```{r, fig.width=3.5,fig.height=12}
+```{r Fecundity-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 
 p_val_heatmap(format_heat(res.all))
 
@@ -917,11 +1214,30 @@ p_val_heatmap(format_heat(res.all))
 #### log2(fold-change) Heatmap
 
 
-```{r, fig.width=3.5,fig.height=12}
+```{r Fecundity-FC, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 
 eff_heatmap(format_heat(eff.all))
 
 ```
+
+
+#### Signifcance Summary Heatmap
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,3]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,3])
+
+sig.all=cbind(eff.all[,1:2],sig.all)
+# colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
+
+```
+
 
 
 ## Activity {.tabset}
@@ -938,7 +1254,7 @@ df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity", all.files, fixed = TRUE)]){
-  
+
   df.t = read_excel(i,sheet = 3,skip=2)
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -948,9 +1264,9 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
-  
-  
+
+
+
   df.t$ID = df.t$Group
   # df.t$Group = unlist(ex_between(df.t$Group,"-","-"))
   df.t$Group = gsub('[0-9]+', '', df.t$Group)
@@ -958,7 +1274,7 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ]
   df.t$Compound = sub("/.*", "", i)
   df=rbind(df,df.t)
-    
+
 }
 
 
@@ -1003,21 +1319,55 @@ df.m$ID = paste0(df.m$ID,df.m$Set.x)
 
 #### Exploratory
 
-```{r, fig.height=7,fig.width=17}
+```{r Awake-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
+
 knitr::kable(table(df$Compound))
 
 ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 
-agg.d = aggregate(value~Group+variable,df.m,"median")
-# agg.d$value = exp(agg.d$`log(value)`)
 
-ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity") +   scale_fill_viridis(discrete=T)+ylab("Total time per Replicate")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group+variable,df.m,median)
+agg.d$gini = aggregate(value~Group+variable,df.m,Hmisc::GiniMd)$value
 
-
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
+
+
+
+```{r Awake_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height = length(unique(df.m$variable))*3.5}
+agg.d2 = aggregate(value~Group+variable+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r Awake_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
 
 
 #### Analysis
@@ -1032,10 +1382,10 @@ for(i in unique(df.m$Compound)){
 
   # fit24 = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
   # fit24 = glmmTMB::glmmTMB(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,],family="nbinom2")
-  # 
+  #
   fit24 = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fit24,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fit24,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1058,13 +1408,13 @@ for(i in unique(df.m$Compound)){
 
   eff.24 = res[,c(1,2)]
   colnames(eff.24)[2] = "Total Awake"
-  
-  
-  
+
+
+
   # fitL = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
   fitL = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitL,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitL,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1087,11 +1437,11 @@ for(i in unique(df.m$Compound)){
   eff.l = res[,c(1,2)]
   colnames(eff.l)[2] = "Light"
 
-  
+
   # fitD = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable ==  "2nd 12-hour bin" &df.m$Compound == i,])
     fitD = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "2nd 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitD,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitD,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1114,10 +1464,10 @@ for(i in unique(df.m$Compound)){
 
   eff.d = res[,c(1,2)]
   colnames(eff.d)[2] = "Dark"
-  
-  
+
+
   res.all=rbind(res.all,merge(merge(res.24,res.l,by="Comparison"),res.d,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.24,eff.l,by="Comparison"),eff.d,by="Comparison"))
 
 }
@@ -1126,14 +1476,14 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 #### Results plots {.tabset}
 
 ##### Second Generation P-val Heatmap
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
+```{r Awake-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 
 p_val_heatmap(format_heat(res.all))
 ```
@@ -1141,9 +1491,27 @@ p_val_heatmap(format_heat(res.all))
 ##### log2(fold-change) Heatmap
 
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
+```{r Awake-FC, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 
 eff_heatmap(format_heat(eff.all))
+
+```
+
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
 
 ```
 
@@ -1156,7 +1524,7 @@ df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity", all.files, fixed = TRUE)]){
-  
+
   df.t = read_excel(i,sheet = 4,skip=2)
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -1166,9 +1534,9 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
-  
-  
+
+
+
   df.t$ID = df.t$Group
   # df.t$Group = unlist(ex_between(df.t$Group,"-","-"))
   df.t$Group = gsub('[0-9]+', '', df.t$Group)
@@ -1176,7 +1544,7 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ]
   df.t$Compound = sub("/.*", "", i)
   df=rbind(df,df.t)
-    
+
 }
 
 
@@ -1221,22 +1589,55 @@ df.m$ID = paste0(df.m$ID,df.m$Set.x)
 
 #### Exploratory
 
-```{r, fig.height=7,fig.width=17}
+```{r Activity-Awake-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
 
 knitr::kable(table(df$Compound))
 
 ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 
-agg.d = aggregate(value~Group+variable,df.m,"median")
-# agg.d$value = exp(agg.d$`log(value)`)
 
-ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity") +   scale_fill_viridis(discrete=T)+ylab("Total time per Replicate")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group+variable,df.m,median)
+agg.d$gini = aggregate(value~Group+variable,df.m,Hmisc::GiniMd)$value
 
-
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
+
+
+
+```{r Activity_Awake_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height = length(unique(df.m$variable))*3.5}
+agg.d2 = aggregate(value~Group+variable+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r Activity_Awake_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
 
 
 #### Analysis
@@ -1251,10 +1652,10 @@ for(i in unique(df.m$Compound)){
 
   # fit24 = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
   # fit24 = glmmTMB::glmmTMB(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,],family="nbinom2")
-  # 
+  #
   fit24 = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fit24,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fit24,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1277,13 +1678,13 @@ for(i in unique(df.m$Compound)){
 
   eff.24 = res[,c(1,2)]
   colnames(eff.24)[2] = "Total Awake"
-  
-  
-  
+
+
+
   # fitL = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
   fitL = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitL,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitL,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1306,11 +1707,11 @@ for(i in unique(df.m$Compound)){
   eff.l = res[,c(1,2)]
   colnames(eff.l)[2] = "Light"
 
-  
+
   # fitD = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable ==  "2nd 12-hour bin" &df.m$Compound == i,])
     fitD = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "2nd 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitD,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitD,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1333,10 +1734,10 @@ for(i in unique(df.m$Compound)){
 
   eff.d = res[,c(1,2)]
   colnames(eff.d)[2] = "Dark"
-  
-  
+
+
   res.all=rbind(res.all,merge(merge(res.24,res.l,by="Comparison"),res.d,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.24,eff.l,by="Comparison"),eff.d,by="Comparison"))
 
 }
@@ -1345,24 +1746,41 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 #### Results plots {.tabset}
 
 ##### Second Generation P-val Heatmap
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
-
+```{r Activity-Awake-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 ```
 
 ##### log2(fold-change) Heatmap
 
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
+```{r Activity-Awake-FC, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
 
 eff_heatmap(format_heat(eff.all))
+
+```
+
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
 
 ```
 
@@ -1370,14 +1788,14 @@ eff_heatmap(format_heat(eff.all))
 
 ### Sleep Episodes {.tabset}
 
-```{r}
+```{r }
 
 library(qdapRegex)
 df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity", all.files, fixed = TRUE)]){
-  
+
   df.t = read_excel(i,sheet = 5,skip=2)
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -1387,9 +1805,9 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
-  
-  
+
+
+
   df.t$ID = df.t$Group
   # df.t$Group = unlist(ex_between(df.t$Group,"-","-"))
   df.t$Group = gsub('[0-9]+', '', df.t$Group)
@@ -1397,7 +1815,7 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ]
   df.t$Compound = sub("/.*", "", i)
   df=rbind(df,df.t)
-    
+
 }
 
 
@@ -1442,21 +1860,54 @@ df.m$ID = paste0(df.m$ID,df.m$Set.x)
 
 #### Exploratory
 
-```{r, fig.height=7,fig.width=17}
+```{r Sleep-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
+
 knitr::kable(table(df$Compound))
 
 ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 
-agg.d = aggregate(value~Group+variable,df.m,"median")
-# agg.d$value = exp(agg.d$`log(value)`)
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group+variable,df.m,median)
+agg.d$gini = aggregate(value~Group+variable,df.m,Hmisc::GiniMd)$value
 
-ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity") +   scale_fill_viridis(discrete=T)+ylab("Total time per Replicate")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
-
-
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
+
+
+
+```{r Sleep_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height = length(unique(df.m$variable))*3.5}
+agg.d2 = aggregate(value~Group+variable+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r Sleep_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
 
 
 #### Analysis
@@ -1471,10 +1922,10 @@ for(i in unique(df.m$Compound)){
 
   # fit24 = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
   # fit24 = glmmTMB::glmmTMB(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,],family="nbinom2")
-  # 
+  #
   fit24 = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fit24,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fit24,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1497,13 +1948,13 @@ for(i in unique(df.m$Compound)){
 
   eff.24 = res[,c(1,2)]
   colnames(eff.24)[2] = "Total Awake"
-  
-  
-  
+
+
+
   # fitL = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
   fitL = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitL,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitL,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1526,11 +1977,11 @@ for(i in unique(df.m$Compound)){
   eff.l = res[,c(1,2)]
   colnames(eff.l)[2] = "Light"
 
-  
+
   # fitD = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable ==  "2nd 12-hour bin" &df.m$Compound == i,])
     fitD = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "2nd 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitD,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitD,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1553,10 +2004,10 @@ for(i in unique(df.m$Compound)){
 
   eff.d = res[,c(1,2)]
   colnames(eff.d)[2] = "Dark"
-  
-  
+
+
   res.all=rbind(res.all,merge(merge(res.24,res.l,by="Comparison"),res.d,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.24,eff.l,by="Comparison"),eff.d,by="Comparison"))
 
 }
@@ -1565,39 +2016,55 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 #### Results plots {.tabset}
 
 ##### Second Generation P-val Heatmap
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
-
+```{r Sleep-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 ```
 
 ##### log2(fold-change) Heatmap
 
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
+```{r Sleep-FC, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
 
 eff_heatmap(format_heat(eff.all))
 
 ```
 
 
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
+
+```
 
 ### Total Sleep {.tabset}
 
-```{r}
+```{r }
 
 library(qdapRegex)
 df=NULL
 all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity", all.files, fixed = TRUE)]){
-  
+
   df.t = read_excel(i,sheet = 6,skip=2)
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -1607,9 +2074,9 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
-  
-  
+
+
+
   df.t$ID = df.t$Group
   # df.t$Group = unlist(ex_between(df.t$Group,"-","-"))
   df.t$Group = gsub('[0-9]+', '', df.t$Group)
@@ -1617,7 +2084,7 @@ for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity"
   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ]
   df.t$Compound = sub("/.*", "", i)
   df=rbind(df,df.t)
-    
+
 }
 
 
@@ -1662,18 +2129,50 @@ df.m$ID = paste0(df.m$ID,df.m$Set.x)
 
 #### Exploratory
 
-```{r, fig.height=7,fig.width=17}
+```{r Total-Sleep-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
+
 knitr::kable(table(df$Compound))
 
 ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 
-agg.d = aggregate(value~Group+variable,df.m,"median")
-# agg.d$value = exp(agg.d$`log(value)`)
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group+variable,df.m,median)
+agg.d$gini = aggregate(value~Group+variable,df.m,Hmisc::GiniMd)$value
 
-ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity") +   scale_fill_viridis(discrete=T)+ylab("Total time per Replicate")+facet_wrap(~variable,ncol=1,scales="free_y")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=1)+xlab("")+theme(strip.background = element_blank())
 
 
+```
+
+
+
+```{r Total_Sleep_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height = length(unique(df.m$variable))*3.5}
+agg.d2 = aggregate(value~Group+variable+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r Total_Sleep_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~variable,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
 
 
 ```
@@ -1691,10 +2190,10 @@ for(i in unique(df.m$Compound)){
 
   # fit24 = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
   # fit24 = glmmTMB::glmmTMB(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,],family="nbinom2")
-  # 
+  #
   fit24 = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fit24,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fit24,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1717,13 +2216,13 @@ for(i in unique(df.m$Compound)){
 
   eff.24 = res[,c(1,2)]
   colnames(eff.24)[2] = "Total Awake"
-  
-  
-  
+
+
+
   # fitL = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
   fitL = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitL,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitL,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1746,11 +2245,11 @@ for(i in unique(df.m$Compound)){
   eff.l = res[,c(1,2)]
   colnames(eff.l)[2] = "Light"
 
-  
+
   # fitD = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable ==  "2nd 12-hour bin" &df.m$Compound == i,])
     fitD = rlmer(log(value+1)~Group+(1|Set/ID),data=df.m[df.m$variable == "2nd 12-hour bin" &df.m$Compound == i,])
 
-  res = confint(emmeans(fitD,trt.vs.ctrl~Group,adjust="none"))$contrasts
+  res = confint(emmeans(fitD,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
@@ -1773,10 +2272,10 @@ for(i in unique(df.m$Compound)){
 
   eff.d = res[,c(1,2)]
   colnames(eff.d)[2] = "Dark"
-  
-  
+
+
   res.all=rbind(res.all,merge(merge(res.24,res.l,by="Comparison"),res.d,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.24,eff.l,by="Comparison"),eff.d,by="Comparison"))
 
 }
@@ -1785,24 +2284,41 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 #### Results plots {.tabset}
 
 ##### Second Generation P-val Heatmap
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
-
+```{r Total-Sleep-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 ```
 
 ##### log2(fold-change) Heatmap
 
 
-```{r, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
+```{r Total-Sleep-FC, fig.width=length(unique(df.m$variable))*1.5,fig.height=length(unique(df.m$Group))/12}
 
 eff_heatmap(format_heat(eff.all))
+
+```
+
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
 
 ```
 
@@ -1812,7 +2328,7 @@ eff_heatmap(format_heat(eff.all))
 
 
 ```{r}
-# 
+#
 library(docxtractr)
 
 all.files = list.files(pattern = ".docx$", recursive = TRUE)
@@ -1826,7 +2342,7 @@ for(i in all.files){
   if(nrow(df1 >0)){
     df1 = df1[,1:4]
     colnames(df1)[1:4] = c("Chemical","Rep1","Rep2","Rep3")
-  
+
     df1$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                         grepl( "Orange", i, fixed = TRUE)~"Orange",
                         grepl( "Pink", i, fixed = TRUE)~"Pink",
@@ -1835,7 +2351,7 @@ for(i in all.files){
                         grepl( "pink", i, fixed = TRUE)~"Pink",
                            TRUE~"Check"
       )
-  
+
     df1$Compound = sub("/.*", "", i)
     df = rbind(df,df1)
   }
@@ -1863,23 +2379,55 @@ df.m=na.omit(df.m)
 df.m$Group = factor(df.m$Group,levels=unique(df.m$Group))
 
 df.m$value = as.numeric(df.m$value)
+
+
 ```
 
 
 ### Exploratory
 
-```{r, fig.height=4,fig.width=18}
+```{r Immune-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = 5.5}
 
 ggplot(df.m,aes(x=Group,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+    scale_color_viridis(discrete=T)+ylab("Number of Flies With Black Dot")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
-agg.d = aggregate(value~Group,df.m,mean)
 
-ggplot(agg.d,aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=45,hjust=1))+geom_bar(stat="identity")+    scale_fill_viridis(discrete=T)+ylab("Number of Flies With Black Dot")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group,df.m,median)
+agg.d$gini = aggregate(value~Group,df.m,Hmisc::GiniMd)$value
+
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15) +
+  scale_fill_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
 
 
-
- 
 ```
+
+
+
+```{r Immune_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height =4 + length(unique(df.m$Compound))}
+agg.d2 = aggregate(value~Group+Compound,df.m,median)
+agg.d2$gini = aggregate(value~Group+Compound,df.m,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)
+
+
+
+```
+
+
+### Controls Only
+
+```{r Immune_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2 ,fig.height = 5}
+
+## Just the controls
+ggplot(na.omit(df.m[df.m$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
 
 ### Analysis {.tabset}
 
@@ -1898,8 +2446,8 @@ for(i in unique(df.m$Compound)){
   } else {
     fit = clm(as.factor(value)~Group,data=df.m[df.m$Compound == i,],link="probit")
   }
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
 
   res$SGPV = sgpvalue(
   est.lo=res$asymp.LCL,
@@ -1915,12 +2463,12 @@ for(i in unique(df.m$Compound)){
 
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
 
-  
+
   res.all = rbind(res.all,data.frame(Compound = i,res[,c(1,7)]))
-  
-  eff.all =  rbind(eff.all,data.frame(Compound = i,res[,c(1,7)]))
-    
-    
+
+  eff.all =  rbind(eff.all,data.frame(Compound = i,res[,c(1,2)]))
+
+
 }
 
 colnames(res.all)[3] = "Number of Flies With Black Dot"
@@ -1931,15 +2479,14 @@ colnames(eff.all)[3] = "Number of Flies With Black Dot"
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 ### Results plots {.tabset}
 
 #### Second Generation P-val Heatmap
 
-```{r ,fig.width= 3.5 ,fig.height = 10}
-
+```{r Immune-pval, fig.width=3+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 
 ```
@@ -1947,12 +2494,32 @@ p_val_heatmap(format_heat(res.all))
 #### log2(fold-change) Heatmap
 
 
-```{r ,fig.width= 3.5 ,fig.height = 10}
+```{r Immune-FC,fig.width= 3.5 ,fig.height = 10}
 
 
 eff_heatmap(format_heat(eff.all))
 
 ```
+
+
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,3:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,3:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1:2],sig.all)
+
+
+sig_heatmap(format_heat(sig.all))
+
+
+
+```
+
 
 
 ## RING {.tabset}
@@ -1963,10 +2530,10 @@ all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
 
 df=NULL
 for(i in all.files[grepl( "ring", all.files, fixed = TRUE)|grepl( "Ring", all.files, fixed = TRUE)|grepl( "RING", all.files, fixed = TRUE)]){
-  
+
   sht = which(tolower(excel_sheets(path = i)) =="analysis")
 
-  
+
   df.t = read_excel(i,sheet = sht)
   df.t$Set = case_when(grepl( "Blue", i, fixed = TRUE)~"Blue",
                        grepl( "Orange", i, fixed = TRUE)~"Orange",
@@ -1976,29 +2543,29 @@ for(i in all.files[grepl( "ring", all.files, fixed = TRUE)|grepl( "Ring", all.fi
                        grepl( "pink", i, fixed = TRUE)~"Pink",
                        TRUE~"Check"
   )
-  
+
   df.t = df.t[,-which(is.na(df.t[1,]))]
-  
+
   colnames(df.t)[1:2] = c("Time","Measure")
-  
+
   df.t = as.data.frame(reshape2::melt(df.t,id.vars=c("Time","Measure","Set")))
   df.t$Compound = sub("/.*", "", i)
   df.t = df.t[!is.na(df.t$value),]
-  
+
   df.t$Group = gsub("\\..*","",df.t$variable)
   df.t$ID = gsub(".*\\.","",df.t$variable)
 
   df.t =  subset(df.t,select= - c(variable))
-  
+
   df.t$Time = na.locf(df.t$Time)
-  
+
   df.t$ID = as.numeric(df.t$ID)
   df.t$ID[is.na(df.t$ID)] = 1
-  
+
   df.t = df.t[df.t$Group !=0,]
-  
+
   df=rbind(df,df.t)
-    
+
 }
 
 df$Group[tolower(df$Group) == "control" | tolower(df$Group) == "c"|tolower(df$Group) == "ctrl"|df$Group == ""] = "Control"
@@ -2031,28 +2598,34 @@ df.m$Group = factor(df.m$Group,levels=c("Control",unique(df.m$Group)[unique(df.m
 
 
 ### Exploratory
- 
+
 Three main outcomes. 5 seconds, 15s cumulative and 30s cumulative (not all analysis tabs had a 30s timepoint, I can make this happen for all data, but it'd be considerable effort; probably better off doing it within the Excel files)
 
-```{r, fig.height=10,fig.width=20}
+```{r RING-Exploratory, fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$Measure))*5.5}
 
 knitr::kable(table(df.m$Compound))
 
 p1=ggplot(df.m[df.m$Time == "5 second data" &df.m$Measure == "average",],aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("5 Second data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
-agg.d = aggregate(value~Group,df.m[df.m$Time == "5 second data" &df.m$Measure == "average",],mean)
-p1.1=ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+   scale_fill_viridis(discrete=T)+ylab("5 Second Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+agg.d = aggregate(value~Group,df.m[df.m$Time == "5 second data" &df.m$Measure == "average",],median)
+agg.d$gini = aggregate(value~Group,df.m[df.m$Time == "5 second data" &df.m$Measure == "average",],Hmisc::GiniMd)$value
+
+p1.1=ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+ geom_errorbar(aes(ymin=value,ymax=value+gini)) +scale_fill_viridis(discrete=T)+ylab("5 Second Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 p2=ggplot(df.m[df.m$Time == "15 second data" &df.m$Measure == "cumulative",],aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("15 Second cumulative data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
-agg.d = aggregate(value~Group,df.m[df.m$Time == "15 second data" &df.m$Measure == "cumulative",],mean)
-p2.1 = ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+   scale_fill_viridis(discrete=T)+ylab("15 Second cumulative Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+agg.d = aggregate(value~Group,df.m[df.m$Time == "15 second data" &df.m$Measure == "cumulative",],median)
+agg.d$gini = aggregate(value~Group,df.m[df.m$Time == "15 second data" &df.m$Measure == "average",],Hmisc::GiniMd)$value
+
+p2.1 = ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+ geom_errorbar(aes(ymin=value,ymax=value+gini)) +   scale_fill_viridis(discrete=T)+ylab("15 Second cumulative Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 
 p3=ggplot(df.m[df.m$Time == "25 second data" &df.m$Measure == "cumulative",],aes(x=Group,y=value,color=Group,shape=Set)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("25 Second cumulative data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
-agg.d = aggregate(value~Group,df.m[df.m$Time == "25 second data" &df.m$Measure == "cumulative",],mean)
-p3.1 = ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+   scale_fill_viridis(discrete=T)+ylab("25 Second cumulative Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
+agg.d = aggregate(value~Group,df.m[df.m$Time == "25 second data" &df.m$Measure == "cumulative",],median)
+agg.d$gini = aggregate(value~Group,df.m[df.m$Time == "25 second data" &df.m$Measure == "average",],Hmisc::GiniMd)$value
+
+p3.1 = ggplot(agg.d,aes(x=Group,y=value,fill=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_bar(stat="identity")+ geom_errorbar(aes(ymin=value,ymax=value+gini)) +   scale_fill_viridis(discrete=T)+ylab("25 Second cumulative Data")+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())
 
 p1/p2/p3
 
@@ -2061,8 +2634,43 @@ p1.1/p2.1/p3.1
 
 ```
 
-### Analysis {.tabset}
 
+
+
+```{r RING_Exploratory_Facet, fig.width= 5 + (length(unique(df.m$Compound))+length(unique(df.m$variable)))/2,fig.height =4 + length(unique(df.m$Compound))}
+
+df.m2 = df.m[df.m$Time %in% c( "5 second data" , "15 second data" , "25 second data"),]
+
+agg.d2 = aggregate(value~Group+Compound+Time,df.m2,median)
+agg.d2$gini = aggregate(value~Group+Compound+Time,df.m2,Hmisc::GiniMd)$value
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+  
+  geom_jitter(data = na.omit(df.m2[df.m2$Time == unique(df.m2$Time)[1],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[1],]),aes(x=Group,ymin=pmax(value-gini,0),ymax=value+gini,color=Group),width=.25)
+
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+   
+  geom_jitter(data = na.omit(df.m2[df.m2$Time == unique(df.m2$Time)[2],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[2],]),aes(x=Group,ymin=pmax(value-gini,0),ymax=value+gini,color=Group),width=.25)
+
+ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+  
+  geom_jitter(data = na.omit(df.m2[df.m2$Time == unique(df.m2$Time)[3],]),aes(x=Group,y=value,color=Group,shape=Set),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Compound,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$Time==unique(agg.d2$Time)[3],]),aes(x=Group,ymin=pmax(value-gini,0),ymax=value+gini,color=Group),width=.25)
+
+```
+
+
+#### Controls Only
+
+```{r RING_Exploratory_Ctrls, fig.width= 5 + (length(unique(df.m2$Compound))+length(unique(df.m2$Time)))/2 ,fig.height = 6}
+
+## Just the controls
+ggplot(na.omit(df.m2[df.m2$Group == "Control",]),aes(x=Compound,y=value,color=Group,shape=Set)) +theme_classic(14)+theme(legend.position = "bottom",axis.text.x = element_text(angle=45,hjust=1))+geom_jitter(height = 0,width=.15)+   scale_color_viridis(discrete=T)+facet_wrap(~Time,scales="free",ncol=3)+xlab("")+theme(strip.background = element_blank())
+
+
+```
+
+
+
+### Analysis {.tabset}
 #### Results
 
 
@@ -2073,19 +2681,19 @@ eff.all=NULL
 
 
 for(i in unique(df.m$Compound)){
-  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "5 second data" &df.m$Measure == "average",]$Set))>2){    
+  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "5 second data" &df.m$Measure == "average",]$Set))>2){
     fit = clmm(as.factor(value)~Group+(1|Set),data=df.m[df.m$Compound == i&df.m$Time == "5 second data" &df.m$Measure == "average",])
   } else {
     fit = clm(as.factor(value)~Group,data=df.m[df.m$Compound == i&df.m$Time == "5 second data" &df.m$Measure == "average",])
   }
-  
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
   if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -2095,31 +2703,31 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
-  
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.5 = res[,c(1,7)]
   colnames(res.5)[2] = "5S"
 
   eff.5 = res[,c(1,2)]
   colnames(eff.5)[2] = "5S"
-  
-  
-  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "15 second data" &df.m$Measure == "cumulative",]$Set))>2){    
+
+
+  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "15 second data" &df.m$Measure == "cumulative",]$Set))>2){
     fit = clmm(as.factor(value)~Group+(1|Set),data=df.m[df.m$Compound == i&df.m$Time == "15 second data" &df.m$Measure == "cumulative",])
   } else {
     fit = clm(as.factor(value)~Group,data=df.m[df.m$Compound == i&df.m$Time == "15 second data" &df.m$Measure == "cumulative",])
   }
-  
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
  if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -2129,31 +2737,31 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
- 
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.15 = res[,c(1,7)]
   colnames(res.15)[2] = "15S Cumulative"
 
   eff.15 = res[,c(1,2)]
   colnames(eff.15)[2] = "15S Cumulative"
-  
-  
-    
-  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "25 second data" &df.m$Measure == "cumulative",]$Set))>2){    
+
+
+
+  if(length(unique(df.m[df.m$Compound==i&df.m$Time == "25 second data" &df.m$Measure == "cumulative",]$Set))>2){
     fit = clmm(as.factor(value)~Group+(1|Set),data=df.m[df.m$Compound == i&df.m$Time == "25 second data" &df.m$Measure == "cumulative",])
   } else {
     fit = clm(as.factor(value)~Group,data=df.m[df.m$Compound == i&df.m$Time == "25 second data" &df.m$Measure == "cumulative",])
   }
-  
-  res = confint(emmeans(fit,trt.vs.ctrl~Group,adjust="none"))$contrasts
-  
+
+  res = confint(emmeans(fit,f,adjust="none"))$contrasts
+
  if(any(is.na(res))){
     res$SGPV = 0.5
   } else {
-  
+
     res$SGPV = sgpvalue(
     est.lo=res$asymp.LCL,
     est.hi=res$asymp.UCL,
@@ -2163,20 +2771,20 @@ for(i in unique(df.m$Compound)){
     warnings = TRUE
     )$p.delta
   }
- 
+
   # res$estimate = exp(res$estimate)
   colnames(res)=c("Comparison","Fractional Difference","se","df","Low","Up","Second Gen P")
   knitr::kable(subset(res,select= c("Comparison","Fractional Difference","Second Gen P")),caption="Differences in the number of pupae")
-  
+
   res.25 = res[,c(1,7)]
   colnames(res.25)[2] = "25S Cumulative"
 
   eff.25 = res[,c(1,2)]
   colnames(eff.25)[2] = "25S Cumulative"
 
-  
+
   res.all=rbind(res.all,merge(merge(res.5,res.15,by="Comparison"),res.25,by="Comparison"))
-  
+
   eff.all=rbind(eff.all,merge(merge(eff.5,eff.15,by="Comparison"),eff.25,by="Comparison"))
 
 }
@@ -2184,15 +2792,14 @@ for(i in unique(df.m$Compound)){
 knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
 
 # res.all[res.all$Comparison == "NA - Control",]
-  
+
 ```
 
 #### Results plots {.tabset}
 
 ##### Second Generation P-val Heatmap
 
-```{r, fig.width=5,fig.height=length(unique(df.m$Group))/12}
-
+```{r RING-pval, fig.width=5+length(unique(df.m$variable)),fig.height=4+length(unique(df.m$Group))/16.5}
 p_val_heatmap(format_heat(res.all))
 
 ```
@@ -2200,11 +2807,29 @@ p_val_heatmap(format_heat(res.all))
 ##### log2(fold-change) Heatmap
 
 
-```{r, fig.width=5,fig.height=length(unique(df.m$Group))/12}
+```{r RING-FC, fig.width=3+length(unique(df.m$variable)),fig.height=length(unique(df.m$Group))/12}
 
 eff_heatmap(format_heat(eff.all))
 
 ```
 
+
+#### Significance Summary Heatmap
+
+
+```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/16.5}
+
+sig.all = res.all[,2:ncol(res.all)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:ncol(eff.all)])
+
+sig.all=cbind(eff.all[,1],sig.all)
+colnames(sig.all)[1]="Comparison"
+
+sig_heatmap(format_heat(sig.all))
+
+
+
+```
 
 
