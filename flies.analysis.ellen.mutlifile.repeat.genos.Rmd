@@ -1,0 +1,1582 @@
+---
+title: "Flies: Ellen"
+output:
+  html_document:
+    self_contained: yes
+    toc: yes
+    toc_float: no
+---
+
+```{r, include=FALSE}
+
+#Some general options and other pre-processing steps. 
+## ie Types of comparisons, filtering, future options
+
+#Compare against control or all comparisons? Comment out the one does not apply
+#To control
+# f = as.formula("trt.vs.ctrl~Group")
+#All pairwise
+f.g = as.formula("pairwise~Group|Sex+Condition")
+
+f.c = as.formula("pairwise~Condition|Sex+Group")
+
+
+
+```
+
+
+
+```{r, include=FALSE}
+
+options(repos = BiocManager::repositories())
+getOption("repos")
+library(ordinal)
+library(qdapRegex)
+
+library(knitr)
+library(glmmTMB)
+library(reshape2)
+library(ggplot2)
+library(viridis)
+library(emmeans)
+library(car)
+library(shiny)
+library(plotly)
+library(patchwork)
+library(powerMediation)
+library(pwr)
+library(dplyr)
+library(data.table)
+library(pwr)
+library(gghalves)
+library(sgpv)
+library(diptest)
+library(mclust)
+library(sigclust)
+library(LaplacesDemon)
+library(viridis)
+library(mousetrap)
+library(lme4)
+library(tidyr)
+library(readxl)
+library(robustlmm)
+library(zoo)
+library(pheatmap)
+options(scipen=999)
+
+
+opts_chunk$set(echo=FALSE, fig.align='center', warning=FALSE, message=FALSE, dev=c('png','cairo_pdf','tiff','jpeg'), cache=FALSE,error=FALSE,fig.width=8,fig.height=10)
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+setwd("~/bbc-secondary/research/LEMH_Ellen_Fly_Shiny/44733_dom")
+library(qdapRegex)
+
+
+all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
+
+```
+
+```{r}
+# Code chunk to store functions for use later on
+
+format_heat = function(df.ht){
+
+  heat.df = reshape(df.ht, idvar = "Comparison", timevar = "timevar", direction = "wide")
+  
+  rownames(heat.df) = heat.df$Comparison
+
+  return(subset(heat.df,select= -c(Comparison)))
+  
+}
+
+ 
+
+p_val_heatmap = function(heat.df){
+  
+    annotate = data.frame(Out = substr(colnames(heat.df),1,nchar(colnames(heat.df))-2), Strata = as.factor(substrRight(colnames(heat.df),5)))
+    rownames(annotate) = colnames(heat.df)
+    
+    Var1        = viridis::viridis(ncol(heat.df))
+    names(Var1) = c(unique(annotate$Out))
+    
+    
+    Var2        =  rev(viridis::mako(length(unique(annotate$Strata))))
+    names(Var2) = c(unique(annotate$Strata))
+    
+    anno_colors = list(Out = Var1,Strata=Var2)
+
+  breaks = seq(0,1,0.05)
+
+  mycols = colorRampPalette(c("darkred","white","black"))(length(breaks)-2)
+
+  # print(pheatmap(heat.df, cluster_rows = F,cluster_cols = F, annotation_col = annotate, annotation_colors =anno_colors, color=mycols,breaks=breaks))
+  
+  heat.df.gg = heat.df
+  
+  heat.df.gg$Dataset = rownames(heat.df.gg)
+  heat.m = reshape2::melt(heat.df.gg,id.vars=c("Dataset"))
+  
+  heat.m$Outcome = gsub("\\..*","",heat.m$variable)
+  
+  if(all(! is.na(as.numeric(substr(heat.m$Outcome,1,1))))){
+    
+    heat.m$Outcome = factor(heat.m$Outcome,levels=unique(heat.m$Outcome)[order(as.numeric(gsub("[^0-9.-]","",unique(heat.m$Outcome))))])
+  }
+  
+  heat.m$Sex = gsub(".*\\.","",heat.m$variable)
+
+
+  heat.m$SGPV = heat.m$value
+  heat.m$Dataset = gsub("-","vs",heat.m$Dataset)
+
+
+  print(ggplot(heat.m,aes(x=Sex,y=Dataset,fill=SGPV))+
+    facet_wrap(~Outcome,ncol=4)+
+    geom_tile(color="black") + theme_classic() + xlab("") + ylab("") +
+    scale_fill_gradient2(low="darkred",mid="white",high="black",midpoint=0.5,limits=c(-0.01,1.01),n.breaks = 7 )+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+
+  
+)
+  
+}
+
+
+eff_heatmap = function(heat.df){
+  breaks = seq(-2,2,0.25)
+  mycols = colorRampPalette(c("blue","white","red"))(16)
+
+    annotate = data.frame(Out = substr(colnames(heat.df),1,nchar(colnames(heat.df))-2), Strata = as.factor(substrRight(colnames(heat.df),5)))
+    rownames(annotate) = colnames(heat.df)
+    
+    Var1        = viridis::viridis(ncol(heat.df))
+    names(Var1) = c(unique(annotate$Out))
+    
+    Var2        =  rev(viridis::mako(length(unique(annotate$Strata))))
+    names(Var2) = c(unique(annotate$Strata))
+    
+    anno_colors = list(Out = Var1,Strata=Var2)
+  
+  heat.df[which(heat.df > 2,arr.ind=T)] = 2
+  heat.df[which(heat.df < -2,arr.ind=T)] = -2
+  
+  
+  # print(pheatmap(heat.df, cluster_rows = F,cluster_cols = F, annotation_col = annotate, annotation_colors =anno_colors, color=mycols,breaks=breaks))
+  
+  
+  heat.df.gg = heat.df
+  
+  heat.df.gg$Dataset = rownames(heat.df.gg)
+  heat.m = reshape2::melt(heat.df.gg,id.vars=c("Dataset"))
+  
+  heat.m$Outcome = gsub("\\..*","",heat.m$variable)
+  
+  if(all(! is.na(as.numeric(substr(heat.m$Outcome,1,1))))){
+    
+    heat.m$Outcome = factor(heat.m$Outcome,levels=unique(heat.m$Outcome)[order(as.numeric(gsub("[^0-9.-]","",unique(heat.m$Outcome))))])
+  }
+  
+  heat.m$Sex = gsub(".*\\.","",heat.m$variable)
+
+  
+
+  heat.m$Effect = heat.m$value
+  
+  heat.m$Effect[heat.m$Effect > 2] = 2
+  heat.m$Effect[heat.m$Effect < -2] = -2
+  ##Adding this so the FC is in the more familair direction
+  
+  heat.m$Effect=-1*heat.m$Effect
+  heat.m$Dataset = gsub("-","vs",heat.m$Dataset)
+  print(ggplot(heat.m,aes(x=Sex,y=Dataset,fill=Effect))+
+    facet_wrap(~Outcome,ncol=4)+
+    geom_tile(color="black") + theme_classic() + xlab("") + ylab("") +
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0,limits=c(-2.01,2.01))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+    
+)
+  
+}
+
+
+
+
+
+sig_heatmap = function(heat.df){
+  
+   
+  
+    annotate = data.frame(Out = substr(colnames(heat.df),1,nchar(colnames(heat.df))-2), Strata = as.factor(substrRight(colnames(heat.df),5)))
+    rownames(annotate) = colnames(heat.df)
+    
+    Var1        = viridis::viridis(ncol(heat.df))
+    names(Var1) = c(unique(annotate$Out))
+    
+    
+    Var2        =  rev(viridis::mako(length(unique(annotate$Strata))))
+    names(Var2) = c(unique(annotate$Strata))
+    
+    anno_colors = list(Out = Var1,Strata=Var2)
+
+  breaks = c(-1,-.75,-.5,0,.5,.75,1)
+
+  mycols = c("blue","blue","black","black","red","red")
+  
+  # print(pheatmap(heat.df, cluster_rows = F,cluster_cols = F, annotation_col = annotate, annotation_colors =anno_colors, color=mycols,breaks=breaks,na_col="white"))
+  
+  heat.df.gg = heat.df
+  
+  heat.df.gg$Dataset = rownames(heat.df.gg)
+  heat.m = reshape2::melt(heat.df.gg,id.vars=c("Dataset"))
+  
+  heat.m$Result = case_when(
+    heat.m$value == -1 ~ "Sig Decrease",
+    heat.m$value == 1 ~ "Sig Increase",
+    heat.m$value == 0 ~ "Equivalent",
+    TRUE ~ "Inconclusive"
+    
+  )
+  
+  heat.m$Outcome = gsub("\\..*","",heat.m$variable)
+  
+  if(all(! is.na(as.numeric(substr(heat.m$Outcome,1,1))))){
+    
+    heat.m$Outcome = factor(heat.m$Outcome,levels=unique(heat.m$Outcome)[order(as.numeric(gsub("[^0-9.-]","",unique(heat.m$Outcome))))])
+  }
+  
+  heat.m$Sex = gsub(".*\\.","",heat.m$variable)
+
+    heat.m$Dataset = gsub("-","vs",heat.m$Dataset)
+
+
+   print(ggplot(heat.m,aes(x=Sex,y=Dataset,fill=Result))+
+    facet_wrap(~Outcome,ncol=4)+
+    geom_tile(color="black") + theme_classic() + xlab("") + ylab("") +
+    scale_fill_manual(values = c("Equivalent" = "black","Inconclusive" = "white", "Sig Increase" = "Red", "Sig Decrease" = "blue"))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          axis.text.x = element_text(angle=45,hjust=1))
+    
+)
+   
+}
+
+
+```
+
+# Data file {.tabset}
+
+For all analyses second generation p-values were used to control the false discovery rate. This method was chosen as it is not reliant on the number of tests run nor is it overly punitive when there are non-independent tests. We have many tests that are at least somewhat dependent because they use the same toxin but at different concentrations. Further, by using second gen p-values we can continually add more and more toxins to the screening without having to incur further penalties (p-vals don't change based on new data). The null interval is based on recommendations from the original methods paper and it is +/-10% for all models. Results are presented in a table of second generation p-values (SGPV) and as heatmaps. SGPV = 0 is considered significant, SGPV =1 is evidence of equivalence, and SGPV = 0.5 is exactly inconclusive. A SGPV = 0.04 is not significant, but it does indicate that there is more evidence of a difference than no difference.  These results may just be under powered and could be worth investigating further as a "potential hit". In the effects heatmaps, all results are either log(fold-change) or log(odds), regardless, red indicates the toxin was higher relative to control and blue the toxin was lower. 
+
+<!-- ## Activity {.tabset} -->
+
+<!-- For each activity assay, the same regression method was used. Robust linear mixed-effects models with a natural log transformation.  Many of these data types would fall roughly into something like a Gamma, log-normal, or some other similar distribution from the exponential family, because they time or episodic in nature. However, I'm not convinced they all fit neatly into these models and the data are close enough to continuous that a robust regression should produce a good fit.  The natural log transformation also moves these data from an exponential family closer to Gaussian (log would be the common link function for each of these distributions). The robust version of the mixed-effects model should also help guard against any heteroscedasticity (unequal variances) or influential values. -->
+
+
+<!-- ### Time Awake {.tabset} -->
+
+<!-- ```{r} -->
+
+<!-- df=NULL -->
+
+<!-- all.files = list.files(pattern = ".xlsx$", recursive = TRUE) -->
+
+<!-- for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity", all.files, fixed = TRUE)]){ -->
+
+<!--   df.t = read_excel(i,sheet = 3,skip=2) -->
+<!--   df.t$ID = df.t$'Fly Number' -->
+<!--   df.t$ID = case_when(df.t$ID %in% paste0("Fly ",1:4) ~ "Rep 1", -->
+<!--                       df.t$ID %in% paste0("Fly ",5:8) ~ "Rep 2", -->
+<!--                       df.t$ID %in% paste0("Fly ",9:12) ~ "Rep 3", -->
+<!--                       TRUE~"Check") -->
+
+<!--   df.t$ID = paste0(df.t$ID,"-",df.t$Group) -->
+
+<!--   # df.t$Group = unlist(ex_between(df.t$Group,"-","-")) -->
+<!--   df.t$Sex = ifelse(grepl("-F",df.t$Group,fixed=T),"F","M") -->
+<!--   df.t$Condition = ifelse(grepl("mgd",tolower(df.t$Group),fixed=T),"MGD","HGD") -->
+<!--   df.t$Group = gsub("-.*","",df.t$Group) -->
+<!--   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ] -->
+
+<!--   df.t$Dataset = sub(".*/", "", i) -->
+<!--   df.t = subset(df.t,select=c("Group" ,          "Fly Number"   ,   "Bin Length"  ,    "24-hour bin"  ,   "1st 12-hour bin", "2nd 12-hour bin" ,"ID",  "Sex", "Condition", "Dataset"   )) -->
+<!--   df=rbind(df,df.t) -->
+
+<!-- } -->
+
+
+
+<!-- df.m = reshape2::melt(df,id.vars=c("Fly Number"   , "Bin Length"      ,   "ID","Sex","Dataset","Group","Condition")) -->
+
+<!-- df.m$value = df.m$value = as.numeric(as.character(df.m$value)) -->
+
+<!-- df.m$Group = factor(df.m$Group,levels= c("WT",unique(df.m$Group[df.m$Group!="WT"])  )) -->
+
+<!-- ``` -->
+
+<!-- #### Exploratory -->
+
+<!-- ```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- knitr::kable(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- freq = as.data.frame(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- ex = freq[freq$Freq == 0,]$Var1 -->
+
+<!-- df.m=df.m[! df.m$Group %in% as.character(ex), ] -->
+
+<!-- ggplot(df.m,aes(x=Group,y=value,color=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank()) -->
+
+<!-- ## Simple bar plot of all the data -->
+<!-- agg.d = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity",color="black")+ -->
+<!--   geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15)+scale_y_continuous(expand=c(0,0))+scale_x_discrete(expand=c(.05,0))+ -->
+<!--   scale_fill_viridis(discrete=T)+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank()) -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ```{r fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- agg.d2 = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d2$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- p1 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p2 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+<!-- p3 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p1/p2/p3 -->
+
+<!-- ``` -->
+
+
+
+
+<!-- ```{r} -->
+
+
+<!-- df.m$Group = as.character(df.m$Group) -->
+
+<!-- analyze.act = function(fxn,var){ -->
+<!--   res.all=NULL -->
+<!--   eff.all=NULL -->
+
+<!--   for(i in unique(df.m$Dataset)){ -->
+
+<!--     # fit24 = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Dataset == i,]) -->
+<!--     # fit24 = glmmTMB::glmmTMB(value~Group+(1|Set/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Dataset == i,],family="nbinom2") -->
+<!--     # -->
+
+
+<!--     fit24 = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=df.m[df.m$variable == "24-hour bin" &df.m$Dataset == i,]) -->
+
+<!--     res = as.data.frame(confint(emmeans(fit24,fxn,adjust="none"))$contrasts) -->
+
+<!--     res$SGPV = sgpvalue( -->
+<!--       est.lo=res$asymp.LCL, -->
+<!--       est.hi=res$asymp.UCL, -->
+<!--       null.lo=log(.95), -->
+<!--       null.hi=log(1.05), -->
+<!--       inf.correction = 1e-05, -->
+<!--       warnings = TRUE -->
+<!--     )$p.delta -->
+
+<!--     # res$estimate = exp(res$estimate) -->
+<!--     colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P") -->
+
+
+<!--     res$Significant= ifelse(res$`Second Gen P` == 0, "*","") -->
+<!--     # knitr::kable(subset(res,select= c("Comparison","Sex","Condition","Fractional Difference","Second Gen P","Significant")),caption="Total time awake 24 hours") -->
+
+<!--     res.24 = res[,c(1,9,2,3)] -->
+<!--     colnames(res.24)[2] = "24 Hour" -->
+
+<!--     eff.24 = res[,c(1,4,2,3)] -->
+<!--     colnames(eff.24)[2] = "24 Hour" -->
+
+
+
+<!--     # fitL = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Dataset == i,]) -->
+<!--     fitL = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=df.m[df.m$variable == "1st 12-hour bin" &df.m$Dataset == i,]) -->
+
+<!--     res = as.data.frame(confint(emmeans(fitL,fxn,adjust="none"))$contrasts) -->
+
+<!--     res$SGPV = sgpvalue( -->
+<!--       est.lo=res$asymp.LCL, -->
+<!--       est.hi=res$asymp.UCL, -->
+<!--       null.lo=log(.9), -->
+<!--       null.hi=log(1.1), -->
+<!--       inf.correction = 1e-05, -->
+<!--       warnings = TRUE -->
+<!--     )$p.delta -->
+
+<!--     # res$estimate = exp(res$estimate) -->
+<!--     colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P") -->
+
+
+<!--     res$Significant= ifelse(res$`Second Gen P` == 0, "*","") -->
+<!--     # knitr::kable(subset(res,select= c("Comparison","Sex","Condition","Fractional Difference","Second Gen P","Significant")),caption="Total time awake 24 hours") -->
+
+<!--     res.l = res[,c(1,9,2,3)] -->
+<!--     colnames(res.l)[2] = "Light" -->
+
+<!--     eff.l = res[,c(1,4,2,3)] -->
+<!--     colnames(eff.l)[2] = "Light" -->
+
+
+<!--     # fitD = glmer.nb(value~Group+(1|Set/ID),data=df.m[df.m$variable ==  "2nd 12-hour bin" &df.m$Dataset == i,]) -->
+<!--       fitD = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=df.m[df.m$variable == "2nd 12-hour bin" &df.m$Dataset == i,]) -->
+
+<!--     res = as.data.frame(confint(emmeans(fitD,fxn,adjust="none"))$contrasts) -->
+
+<!--     res$SGPV = sgpvalue( -->
+<!--       est.lo=res$asymp.LCL, -->
+<!--       est.hi=res$asymp.UCL, -->
+<!--       null.lo=log(.9), -->
+<!--       null.hi=log(1.1), -->
+<!--       inf.correction = 1e-05, -->
+<!--       warnings = TRUE -->
+<!--     )$p.delta -->
+
+<!--     # res$estimate = exp(res$estimate) -->
+<!--     colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P") -->
+
+
+<!--     res$Significant= ifelse(res$`Second Gen P` == 0, "*","") -->
+<!--     # knitr::kable(subset(res,select= c("Comparison","Sex",var,"Fractional Difference","Second Gen P","Significant")),caption="Total time awake 24 hours") -->
+
+<!--     res.d = res[,c(1,9,2,3)] -->
+<!--     colnames(res.d)[2] = "Dark" -->
+
+<!--     eff.d = res[,c(1,4,2,3)] -->
+<!--     colnames(eff.d)[2] = "Dark" -->
+
+<!--     # res.24$Comparison = paste0(i, ": ",res.24$Comparison)  -->
+<!--     # res.l$Comparison =  paste0(i, ": ",res.l$Comparison)  -->
+<!--     # res.d$Comparison =  paste0(i, ": ",res.d$Comparison)  -->
+<!--     #  -->
+<!--     res.all=rbind(res.all,merge(merge(res.24,res.l,by=c("Comparison","Sex",var)),res.d,by=c("Comparison","Sex",var))) -->
+
+
+<!--     eff.all=rbind(eff.all,merge(merge(eff.24,eff.l,by=c("Comparison","Sex",var)),eff.d,by=c("Comparison","Sex",var))) -->
+
+
+<!--   } -->
+
+<!--     res.all$timevar = paste0(res.all$Sex," ",res.all[,var]) -->
+<!--     res.all = res.all[,! colnames(res.all) %in% c('Sex', var)] -->
+
+<!--     eff.all$timevar = paste0(eff.all$Sex," ",eff.all[,var]) -->
+<!--     eff.all = eff.all[,! colnames(eff.all) %in% c('Sex', var)] -->
+
+<!--   return(list(eff.all = eff.all,res.all = res.all)) -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- #### Analysis {.tabset} -->
+
+<!-- ##### Mutant differences within condition {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.g,"Condition") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+<!-- # res.all[res.all$Comparison == "NA - Control",] -->
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r ,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+<!-- res.all = res.all[grepl("WT",fixed=T,res.all$Comparison),] -->
+<!-- eff.all = eff.all[grepl("WT",fixed=T,eff.all$Comparison),] -->
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+<!-- ##### Condition Differences Within Mutants {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.c,"Group") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- colnames(res.all)[colnames(res.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+<!-- colnames(eff.all)[colnames(eff.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+
+<!-- ### Activity Awake {.tabset} -->
+
+<!-- ```{r} -->
+
+<!-- df=NULL -->
+<!-- all.files = list.files(pattern = ".xlsx$", recursive = TRUE) -->
+
+<!-- for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity",      all.files, fixed = TRUE)]){ -->
+
+<!--   df.t = read_excel(i,sheet = 4,skip=2) -->
+<!--   df.t$ID = df.t$'Fly Number' -->
+<!--   df.t$ID = case_when(df.t$ID %in% paste0("Fly ",1:4) ~ "Rep 1", -->
+<!--                       df.t$ID %in% paste0("Fly ",5:8) ~ "Rep 2", -->
+<!--                       df.t$ID %in% paste0("Fly ",9:12) ~ "Rep 3", -->
+<!--                       TRUE~"Check") -->
+
+<!--   df.t$ID = paste0(df.t$ID,"-",df.t$Group) -->
+<!--   df.t$Sex = ifelse(grepl("-F",df.t$Group,fixed=T),"F","M") -->
+<!--   df.t$Condition = ifelse(grepl("mgd",tolower(df.t$Group),fixed=T),"MGD","HGD") -->
+<!--   df.t$Group = gsub("-.*","",df.t$Group) -->
+<!--   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ] -->
+
+<!--   df.t$Dataset = sub(".*/", "", i) -->
+<!--   df.t = subset(df.t,select=c("Group" ,          "Fly Number"   ,   "Bin Length"  ,    "24-hour bin"  ,   "1st 12-hour bin", "2nd 12-hour bin" ,"ID",  "Sex", "Condition", "Dataset"   )) -->
+<!--   df=rbind(df,df.t) -->
+
+
+<!-- } -->
+
+
+
+<!-- df.m = reshape2::melt(df,id.vars=c("Fly Number"   , "Bin Length"      ,   "ID","Sex","Dataset","Group","Condition")) -->
+
+<!-- df.m$value = df.m$value = as.numeric(as.character(df.m$value)) -->
+
+<!-- df.m$Group = factor(df.m$Group,levels= c("WT",unique(df.m$Group[df.m$Group!="WT"])  )) -->
+
+<!-- ``` -->
+
+
+
+<!-- #### Exploratory -->
+
+<!-- ```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- knitr::kable(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- freq = as.data.frame(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- ex = freq[freq$Freq == 0,]$Var1 -->
+
+<!-- df.m=df.m[! df.m$Group %in% as.character(ex), ] -->
+
+<!-- ggplot(df.m,aes(x=Group,y=value,color=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank()) -->
+
+<!-- ## Simple bar plot of all the data -->
+<!-- agg.d = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity",color="black")+ -->
+<!--   geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15)+scale_y_continuous(expand=c(0,0))+scale_x_discrete(expand=c(.05,0))+ -->
+<!--   scale_fill_viridis(discrete=T)+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank()) -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ```{r fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- agg.d2 = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d2$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- p1 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p2 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+<!-- p3 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p1/p2/p3 -->
+
+<!-- ``` -->
+
+<!-- #### Analysis {.tabset} -->
+
+<!-- ##### Mutant differences within condition {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.g,"Condition") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+<!-- # res.all[res.all$Comparison == "NA - Control",] -->
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r ,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+<!-- res.all = res.all[grepl("WT",fixed=T,res.all$Comparison),] -->
+<!-- eff.all = eff.all[grepl("WT",fixed=T,eff.all$Comparison),] -->
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+<!-- ##### Condition Differences Within Mutants {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.c,"Group") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- colnames(res.all)[colnames(res.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+<!-- colnames(eff.all)[colnames(eff.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+
+<!-- ### Sleep Episodes {.tabset} -->
+
+<!-- ```{r} -->
+
+<!-- df=NULL -->
+<!-- all.files = list.files(pattern = ".xlsx$", recursive = TRUE) -->
+
+<!-- for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity",      all.files, fixed = TRUE)]){ -->
+
+<!--   df.t = read_excel(i,sheet = 5,skip=2) -->
+<!--   df.t$ID = df.t$'Fly Number' -->
+<!--   df.t$ID = case_when(df.t$ID %in% paste0("Fly ",1:4) ~ "Rep 1", -->
+<!--                       df.t$ID %in% paste0("Fly ",5:8) ~ "Rep 2", -->
+<!--                       df.t$ID %in% paste0("Fly ",9:12) ~ "Rep 3", -->
+<!--                       TRUE~"Check") -->
+
+<!--   df.t$ID = paste0(df.t$ID,"-",df.t$Group) -->
+<!--   df.t$Sex = ifelse(grepl("-F",df.t$Group,fixed=T),"F","M") -->
+<!--   df.t$Condition = ifelse(grepl("mgd",tolower(df.t$Group),fixed=T),"MGD","HGD") -->
+<!--   df.t$Group = gsub("-.*","",df.t$Group) -->
+<!--   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ] -->
+
+<!--   df.t$Dataset = sub(".*/", "", i) -->
+<!--   df.t = subset(df.t,select=c("Group" ,          "Fly Number"   ,   "Bin Length"  ,    "24-hour bin"  ,   "1st 12-hour bin", "2nd 12-hour bin" ,"ID",  "Sex", "Condition", "Dataset"   )) -->
+<!--   df=rbind(df,df.t) -->
+
+
+<!-- } -->
+
+
+
+<!-- df.m = reshape2::melt(df,id.vars=c("Fly Number"   , "Bin Length"      ,   "ID","Sex","Dataset","Group","Condition")) -->
+
+<!-- df.m$value = df.m$value = as.numeric(as.character(df.m$value)) -->
+
+<!-- df.m$Group = factor(df.m$Group,levels= c("WT",unique(df.m$Group[df.m$Group!="WT"])  )) -->
+
+<!-- ``` -->
+
+
+
+<!-- #### Exploratory -->
+
+<!-- ```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- knitr::kable(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- freq = as.data.frame(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- ex = freq[freq$Freq == 0,]$Var1 -->
+
+<!-- df.m=df.m[! df.m$Group %in% as.character(ex), ] -->
+
+<!-- ggplot(df.m,aes(x=Group,y=value,color=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank()) -->
+
+<!-- ## Simple bar plot of all the data -->
+<!-- agg.d = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity",color="black")+ -->
+<!--   geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15)+scale_y_continuous(expand=c(0,0))+scale_x_discrete(expand=c(.05,0))+ -->
+<!--   scale_fill_viridis(discrete=T)+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank()) -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ```{r fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- agg.d2 = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d2$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- p1 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p2 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+<!-- p3 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p1/p2/p3 -->
+
+<!-- ``` -->
+
+<!-- #### Analysis {.tabset} -->
+
+<!-- ##### Mutant differences within condition {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.g,"Condition") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+<!-- # res.all[res.all$Comparison == "NA - Control",] -->
+<!-- res.all = res.all[grepl("WT",fixed=T,res.all$Comparison),] -->
+<!-- eff.all = eff.all[grepl("WT",fixed=T,eff.all$Comparison),] -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r ,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+<!-- ##### Condition Differences Within Mutants {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.c,"Group") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- colnames(res.all)[colnames(res.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+<!-- colnames(eff.all)[colnames(eff.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+
+
+<!-- ### Total Sleep Duration {.tabset} -->
+
+<!-- ```{r} -->
+
+<!-- df=NULL -->
+<!-- all.files = list.files(pattern = ".xlsx$", recursive = TRUE) -->
+
+<!-- for(i in all.files[grepl( "Activity", all.files, fixed = TRUE)|grepl( "activity",      all.files, fixed = TRUE)]){ -->
+
+<!--   df.t = read_excel(i,sheet = 6,skip=2) -->
+<!--   df.t$ID = df.t$'Fly Number' -->
+<!--   df.t$ID = case_when(df.t$ID %in% paste0("Fly ",1:4) ~ "Rep 1", -->
+<!--                       df.t$ID %in% paste0("Fly ",5:8) ~ "Rep 2", -->
+<!--                       df.t$ID %in% paste0("Fly ",9:12) ~ "Rep 3", -->
+<!--                       TRUE~"Check") -->
+
+<!--   df.t$ID = paste0(df.t$ID,"-",df.t$Group) -->
+<!--   df.t$Sex = ifelse(grepl("-F",df.t$Group,fixed=T),"F","M") -->
+<!--   df.t$Condition = ifelse(grepl("mgd",tolower(df.t$Group),fixed=T),"MGD","HGD") -->
+<!--   df.t$Group = gsub("-.*","",df.t$Group) -->
+<!--   df.t = df.t[! df.t$`Fly Number` %in% c("Average","SEM"), ] -->
+
+<!--   df.t$Dataset = sub(".*/", "", i) -->
+<!--   df.t = subset(df.t,select=c("Group" ,          "Fly Number"   ,   "Bin Length"  ,    "24-hour bin"  ,   "1st 12-hour bin", "2nd 12-hour bin" ,"ID",  "Sex", "Condition", "Dataset"   )) -->
+<!--   df=rbind(df,df.t) -->
+
+
+<!-- } -->
+
+
+
+<!-- df.m = reshape2::melt(df,id.vars=c("Fly Number"   , "Bin Length"      ,   "ID","Sex","Dataset","Group","Condition")) -->
+
+<!-- df.m$value = df.m$value = as.numeric(as.character(df.m$value)) -->
+
+<!-- df.m$Group = factor(df.m$Group,levels= c("WT",unique(df.m$Group[df.m$Group!="WT"])  )) -->
+
+<!-- ``` -->
+
+
+
+<!-- #### Exploratory -->
+
+<!-- ```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- knitr::kable(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- freq = as.data.frame(table(df$Group,df$Sex,df$Condition)) -->
+
+<!-- ex = freq[freq$Freq == 0,]$Var1 -->
+
+<!-- df.m=df.m[! df.m$Group %in% as.character(ex), ] -->
+
+<!-- ggplot(df.m,aes(x=Group,y=value,color=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Total time for every fly")+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank()) -->
+
+<!-- ## Simple bar plot of all the data -->
+<!-- agg.d = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity",color="black")+ -->
+<!--   geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15)+scale_y_continuous(expand=c(0,0))+scale_x_discrete(expand=c(.05,0))+ -->
+<!--   scale_fill_viridis(discrete=T)+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank()) -->
+
+
+<!-- ``` -->
+
+
+
+<!-- ```{r fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5} -->
+
+<!-- agg.d2 = aggregate(value~Group+variable+Sex+Condition,df.m,median) -->
+<!-- agg.d2$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value -->
+
+<!-- p1 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p2 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+<!-- p3 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+ -->
+<!--   geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25) -->
+
+
+<!-- p1/p2/p3 -->
+
+<!-- ``` -->
+
+<!-- #### Analysis {.tabset} -->
+
+<!-- ##### Mutant differences within condition {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.g,"Condition") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+<!-- # res.all[res.all$Comparison == "NA - Control",] -->
+<!-- res.all = res.all[grepl("WT",fixed=T,res.all$Comparison),] -->
+<!-- eff.all = eff.all[grepl("WT",fixed=T,eff.all$Comparison),] -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r ,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=6,fig.height=3+length(unique(df.m$Group))/9} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+<!-- ##### Condition Differences Within Mutants {.tabset} -->
+
+
+
+<!-- ```{r} -->
+
+<!-- t.awake.mut = analyze.act(f.c,"Group") -->
+
+<!-- res.all = t.awake.mut$res.all -->
+<!-- eff.all = t.awake.mut$eff.all -->
+
+<!-- # knitr::kable(res.all,digits=3,caption = "Second Generation P-values") -->
+
+
+<!-- ``` -->
+
+
+<!-- ###### Second Generation P-val Heatmap -->
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- colnames(res.all)[colnames(res.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+<!-- colnames(eff.all)[colnames(eff.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar")) -->
+
+
+
+<!-- p_val_heatmap(format_heat(res.all)) -->
+
+
+<!-- ``` -->
+
+<!-- ###### log2(fold-change) Heatmap -->
+
+
+<!-- ```{r,  fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- eff_heatmap(format_heat(eff.all)) -->
+
+<!-- ``` -->
+
+<!-- ###### Significance Summary Heatmap -->
+
+
+<!-- ```{r, fig.width=3,fig.height=3+length(unique(df.m$Group))/6} -->
+
+<!-- sig.all = res.all[,2:(ncol(res.all)-1)] -->
+<!-- sig.all[sig.all != 1 &sig.all !=0] = NA -->
+<!-- sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)]) -->
+
+<!-- sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all) -->
+
+<!-- sig_heatmap(format_heat(sig.all)) -->
+<!-- ``` -->
+
+
+## Social Distancing {.tabset}
+
+
+```{r}
+
+df=NULL
+all.files = list.files(pattern = ".xlsx$", recursive = TRUE)
+
+for(i in all.files){
+
+  df.t = read_excel(i,sheet = 1)
+
+  df.t$ID = df.t$condition
+  # df.t$Group = unlist(ex_between(df.t$Group,"-","-"))
+  df.t$Sex = ifelse(grepl("female",df.t$ID,fixed=T),"F","M")
+  df.t$Condition = ifelse(grepl("mgd",tolower(df.t$ID),fixed=T),"MGD","HGD")
+  df.t$Group = df.t$ID
+  df.t$Group = gsub("MGD","", df.t$Group)
+  df.t$Group = gsub("HGD","", df.t$Group)
+  
+  df.t$Group = gsub("female","", df.t$Group)
+  df.t$Group = gsub("Female","", df.t$Group)
+  df.t$Group = gsub("Male","", df.t$Group)
+  df.t$Group = gsub("male","", df.t$Group)
+  df.t$Group = gsub("rep1","", df.t$Group)
+  df.t$Group = gsub("rep2","", df.t$Group)
+  df.t$Group = gsub("rep3","", df.t$Group)
+  df.t$Group = gsub(" ","", df.t$Group)
+  df.t$Group = gsub("R1","", df.t$Group)
+  df.t$Group = gsub("R2","", df.t$Group)
+  df.t$Group = gsub("R3","", df.t$Group)
+  df.t$ID = df.t$name
+  
+  df.t$Dataset = sub(".*/", "", i)
+  df.t = subset(df.t, select = c(ID,Group,Sex,Dataset,Condition,dist1,dist2,dist3,av_dist))
+  if(length(unique(df.t$Condition))>1){
+    df=rbind(df,df.t)
+  }
+}
+
+
+
+
+df.m = reshape2::melt(df,id.vars=c("ID","Sex","Dataset","Group","Condition"))
+
+df.m$value = df.m$value = as.numeric(as.character(df.m$value))
+df.m$Group = gsub("rep1","", df.m$Group)
+df.m$Group = factor(df.m$Group,levels= c("WT",unique(df.m$Group[df.m$Group!="WT"])  )) 
+
+```
+
+### Exploratory
+
+```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
+
+knitr::kable(table(df$Group,df$Sex,df$Condition))
+knitr::kable(table(df$ID,df$Dataset))
+
+freq = as.data.frame(table(df$Group,df$Sex,df$Condition))
+
+ex = freq[freq$Freq == 0,]$Var1
+
+df.m=df.m[! df.m$Group %in% as.character(ex), ]
+
+
+
+ggplot(df.m,aes(x=Group,y=value,color=Group)) + theme_classic(12)+theme(legend.position = "none")+geom_jitter(width=0.15,height=0)+   scale_color_viridis(discrete=T)+ylab("Distance")+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+theme(axis.text.x = element_text(angle=90,hjust=1),strip.background = element_blank())+scale_y_continuous(trans="log")
+
+
+
+## Simple bar plot of all the data
+agg.d = aggregate(value~Group+variable+Sex+Condition,df.m,median)
+agg.d$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value
+
+ggplot(na.omit(agg.d),aes(x=Group,y=value,fill=Group)) +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_bar(stat="identity",color="black")+
+  geom_errorbar(aes(ymin=value,ymax=value+gini),width=.15)+scale_y_continuous(expand=c(0,0))+scale_x_discrete(expand=c(.05,0))+
+  scale_fill_viridis(discrete=T)+facet_wrap(variable~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(trans="log")
+
+
+```
+
+
+
+```{r , fig.width= 5 + length(unique(df.m$Group))/9.6 ,fig.height = length(unique(df.m$variable))*5.5}
+
+agg.d2 = aggregate(value~Group+variable+Sex+Condition,df.m,median)
+agg.d2$gini = aggregate(value~Group+variable+Sex+Condition,df.m,Hmisc::GiniMd)$value
+
+
+p1 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[1],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[1],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)+scale_y_continuous(trans="log")
+
+
+p2 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[2],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[2],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)+scale_y_continuous(trans="log")
+
+p3 = ggplot() +theme_classic(14)+theme(legend.position = "none",axis.text.x = element_text(angle=90,hjust=1))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value,ymax=value,color=Group),width=.7)+
+  geom_jitter(data = na.omit(df.m[df.m$variable == unique(df.m$variable)[3],]),aes(x=Group,y=value,color=Group),height = 0,width=.35)+ scale_color_viridis(discrete=T)+facet_wrap(~Sex+Condition,scales="free",ncol=2)+xlab("")+theme(strip.background = element_blank())+scale_y_continuous(expand=c(0,0))+geom_errorbar(data=na.omit(agg.d2[agg.d2$variable==unique(agg.d2$variable)[3],]),aes(x=Group,ymin=value-gini,ymax=value+gini,color=Group),width=.25)+scale_y_continuous(trans="log")
+
+
+p1/p2/p3
+
+```
+
+
+
+
+
+```{r}
+
+
+analyze.soc = function(fxn,var){
+  res.all=NULL
+  eff.all=NULL
+  df.m$Group = as.character(df.m$Group)
+  # for(i in unique(df.m$Dataset)){
+    # tmp = df.m[df.m$variable == "dist1" &df.m$Dataset == i,]
+    tmp = df.m[df.m$variable == "dist1" ,]
+    tmp$Group = factor(tmp$Group,levels=c("WT",unique(tmp$Group[tmp$Group !="WT"])))
+    fitd1 = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=tmp)
+  
+    res = data.frame(summary(confint(emmeans(fitd1,fxn,adjust="none"))$contrasts))
+  
+    res$SGPV = sgpvalue(
+      est.lo=res$asymp.LCL,
+      est.hi=res$asymp.UCL,
+      null.lo=log(.95),
+      null.hi=log(1.05),
+      inf.correction = 1e-05,
+      warnings = TRUE
+    )$p.delta
+  
+    # res$estimate = exp(res$estimate)
+    colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P")
+  
+  
+    res$Significant= ifelse(res$`Second Gen P` == 0, "*","")
+    # knitr::kable(subset(res,select= c("Comparison","Sex","Fractional Difference","Second Gen P","Significant")),caption="Distance 1")
+    # 
+    res.d1 = res[,c(1,9,2,3)]
+    colnames(res.d1)[2] = "Distance 1"
+  
+    eff.d1 = res[,c(1,4,3,2)]
+    colnames(eff.d1)[2] = "Distance 1"
+    tmp = df.m[df.m$variable == "dist2" ,]
+    tmp$Group = factor(tmp$Group,levels=c("WT",unique(tmp$Group[tmp$Group !="WT"])))
+    
+    fitd2 = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=tmp)
+  
+    res = data.frame(confint(emmeans(fitd2,fxn,adjust="none"))$contrasts)
+  
+    res$SGPV = sgpvalue(
+      est.lo=res$asymp.LCL,
+      est.hi=res$asymp.UCL,
+      null.lo=log(.95),
+      null.hi=log(1.05),
+      inf.correction = 1e-05,
+      warnings = TRUE
+    )$p.delta
+  
+    # res$estimate = exp(res$estimate)
+    colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P")
+  
+  
+    res$Significant= ifelse(res$`Second Gen P` == 0, "*","")
+    # knitr::kable(subset(res,select= c("Comparison","Sex","Fractional Difference","Second Gen P","Significant")),caption="Distance 2")
+  
+    res.d2 = res[,c(1,9,2,3)]
+    colnames(res.d2)[2] = "Distance 2"
+  
+    eff.d2 = res[,c(1,4,3,2)]
+    colnames(eff.d2)[2] = "Distance 2"
+      tmp = df.m[df.m$variable == "dist3",]
+    tmp$Group = factor(tmp$Group,levels=c("WT",unique(tmp$Group[tmp$Group !="WT"])))
+  
+  
+    fitd3 = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=tmp)
+  
+    res = data.frame(confint(emmeans(fitd3,fxn,adjust="none"))$contrasts)
+  
+    res$SGPV = sgpvalue(
+      est.lo=res$asymp.LCL,
+      est.hi=res$asymp.UCL,
+      null.lo=log(.95),
+      null.hi=log(1.05),
+      inf.correction = 1e-05,
+      warnings = TRUE
+    )$p.delta
+  
+    # res$estimate = exp(res$estimate)
+    colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P")
+  
+  
+    res$Significant= ifelse(res$`Second Gen P` == 0, "*","")
+
+    res.d3 = res[,c(1,9,2,3)]
+    colnames(res.d3)[2] = "Distance 3"
+  
+    eff.d3 = res[,c(1,4,3,2)]
+    colnames(eff.d3)[2] = "Distance 3"
+  
+      tmp = df.m[df.m$variable == "av_dist" ,]
+    tmp$Group = factor(tmp$Group,levels=c("WT",unique(tmp$Group[tmp$Group !="WT"])))
+  
+    fitad = rlmer(log(value+1)~Group*Sex*Condition+(1|Dataset/ID),data=tmp)
+  
+    res = data.frame(confint(emmeans(fitad,fxn,adjust="none"))$contrasts)
+  
+    res$SGPV = sgpvalue(
+      est.lo=res$asymp.LCL,
+      est.hi=res$asymp.UCL,
+      null.lo=log(.95),
+      null.hi=log(1.05),
+      inf.correction = 1e-05,
+      warnings = TRUE
+    )$p.delta
+  
+    # res$estimate = exp(res$estimate)
+    colnames(res)=c("Comparison","Sex",var,"Fractional Difference","se","df","Low","Up","Second Gen P")
+  
+  
+    res$Significant= ifelse(res$`Second Gen P` == 0, "*","")
+
+  
+    res.ad = res[,c(1,9,2,3)]
+    colnames(res.ad)[2] = "Mean Distance"
+  
+    eff.ad = res[,c(1,4,3,2)]
+    colnames(eff.ad)[2] = "Mean Distance"
+  
+  
+  
+    res.all=rbind(res.all,merge(merge(merge(res.d1,res.d2,by=c("Comparison","Sex",var)),res.d3,by=c("Comparison","Sex",var)),res.ad,by=c("Comparison","Sex",var)))
+  
+    eff.all= rbind(eff.all,merge(merge(merge(eff.d1,eff.d2,by=c("Comparison","Sex",var)),eff.d3,by=c("Comparison","Sex",var)),eff.ad,by=c("Comparison","Sex",var)))
+  
+  
+  # }
+    res.all$timevar = paste0(res.all$Sex," ",res.all[,var])
+    res.all = res.all[,! colnames(res.all) %in% c('Sex', var)]
+    
+    eff.all$timevar = paste0(eff.all$Sex," ",eff.all[,var])
+    eff.all = eff.all[,! colnames(eff.all) %in% c('Sex', var)]
+  
+  
+  return(list(eff.all=eff.all,res.all=res.all))
+  
+}
+
+
+# res.all[res.all$Comparison == "NA - Control",]
+
+```
+
+
+
+### Analysis {.tabset}
+
+#### Mutant differences within condition {.tabset}
+
+
+```{r}
+
+t.awake.mut = analyze.soc(f.g,"Condition")
+
+res.all = t.awake.mut$res.all
+eff.all = t.awake.mut$eff.all
+
+# knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
+
+# res.all[res.all$Comparison == "NA - Control",]
+
+```
+
+
+##### Second Generation P-val Heatmap
+
+```{r ,  fig.width=8,fig.height=3+length(unique(df.m$Group))/9}
+res.all = res.all[grepl("WT",fixed=T,res.all$Comparison),]
+eff.all = eff.all[grepl("WT",fixed=T,eff.all$Comparison),]
+
+
+p_val_heatmap(format_heat(res.all))
+
+
+```
+
+##### log2(fold-change) Heatmap
+
+
+```{r,  fig.width=8,fig.height=3+length(unique(df.m$Group))/9}
+
+eff_heatmap(format_heat(eff.all))
+
+```
+
+##### Significance Summary Heatmap
+
+
+```{r, fig.width=8,fig.height=3+length(unique(df.m$Group))/9}
+
+sig.all = res.all[,2:(ncol(res.all)-1)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= (sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)])
+
+sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all)
+
+sig_heatmap(format_heat(sig.all))
+
+```
+
+#### Condition Differences Within Mutants {.tabset}
+
+
+
+```{r}
+
+t.awake.mut = analyze.soc(f.c,"Group")
+
+res.all = t.awake.mut$res.all
+eff.all = t.awake.mut$eff.all
+
+# knitr::kable(res.all,digits=3,caption = "Second Generation P-values")
+
+
+```
+
+
+##### Second Generation P-val Heatmap
+
+```{r, fig.width=4,fig.height=3+length(unique(df.m$Group))/6}
+
+colnames(res.all)[colnames(res.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar"))
+
+
+colnames(eff.all)[colnames(eff.all) %in% c("Comparison","timevar")]=rev(c("Comparison","timevar"))
+
+
+
+p_val_heatmap(format_heat(res.all))
+
+
+```
+
+##### log2(fold-change) Heatmap
+
+
+```{r,  fig.width=4,fig.height=3+length(unique(df.m$Group))/6}
+
+eff_heatmap(format_heat(eff.all))
+
+```
+
+##### Significance Summary Heatmap
+
+
+```{r, fig.width=4,fig.height=3+length(unique(df.m$Group))/6}
+
+sig.all = res.all[,2:(ncol(res.all)-1)]
+sig.all[sig.all != 1 &sig.all !=0] = NA
+sig.all= -1*(sig.all-1) * sign(eff.all[,2:(ncol(eff.all)-1)])
+
+sig.all=cbind(eff.all[,c(1,ncol(eff.all))],sig.all)
+
+sig_heatmap(format_heat(sig.all))
+```
+
