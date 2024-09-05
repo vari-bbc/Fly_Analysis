@@ -1,0 +1,569 @@
+---
+title: "Untitled"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-07-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warnings=F,cache=F,fig.height = 5,fig.width = 11)
+library(readxl)
+library(mgcv)
+library(emmeans)
+library(patchwork)
+library(ggplot2)
+library(dendextend)
+library(ggsci)
+library(tidyr)
+library(data.table)
+library(dplyr)
+library(ggbeeswarm)
+library(ggprism)
+library(sgpv)
+library(robustlmm)
+library(glmmTMB)
+
+```
+
+## R Files {.tabset}
+
+
+```{r}
+#analysis functions
+
+# Need to split into multiple GAMs if there are multiple genotypes? Yes
+fit_geno_gams=function(data.a,files){
+  if(length(files)>1){
+    fit = gam(Comparison ~ s(x_coor,y_coor)+ s(file,bs="re") + s(Replicate, bs = "re") ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+    fit2 = gam(Comparison ~ s(file,bs="re") + s(Replicate, bs = "re") ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+    res = lmtest::lrtest(fit,fit2)[2,]$'Pr(>Chisq)'
+  } else {
+    if(length(unique(data.a[data.a$file %in% files,]$Replicate))>1){
+      fit = gam(Comparison ~ s(x_coor,y_coor)+ s(Replicate, bs = "re") ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+      fit2 = gam(Comparison ~  s(Replicate, bs = "re") ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+      res = lmtest::lrtest(fit,fit2)[2,]$'Pr(>Chisq)'
+    } else {
+      fit = gam(Comparison ~ s(x_coor,y_coor) ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+      fit2 = gam(Comparison ~  1 ,data=data.a[data.a$file %in% files,],method='ML',family="binomial")
+      res = lmtest::lrtest(fit,fit2)[2,]$'Pr(>Chisq)'
+    }
+  }
+  
+  
+  p1 =ggplot(data.a,aes(x = x_coor,y=y_coor,color=Comparison,shape=Replicate )) + geom_point() + theme_prism(base_size=14) + annotate(geom="path",x = c(0,1800,900,0),y = c(50,50,1900,50),color="black")+scale_color_manual(values=c( "forestgreen",  "darkorchid")) +facet_grid(Replicate~file)+theme(legend.title = element_blank())
+
+  p2 =  ggplot(data.a,aes(x = x_coor,y=y_coor,color=Comparison,shape=Replicate )) + geom_point() + theme_prism(base_size=14) + annotate(geom="path",x = c(0,1800,900,0),y = c(50,50,1900,50),color="black")+scale_color_manual(values=c( "forestgreen",  "darkorchid")) +theme(legend.title = element_blank())
+
+  poly =
+    # The syntax for creating a polygon with sf is a little strange.
+    # It has to be a list of matrices and the first point has to be 
+    # repeated as the last point (2, 1).
+    list(
+      matrix(
+        c(100,100,1800,100,925,1900,100,100),
+        ncol=2, byrow=T
+      )
+    ) 
+  
+  # Create an sf polygon
+  polygon = sf::st_polygon(poly)
+  # Sample 50 random points within the polygon
+  points = sf::st_sample(polygon, size=10000)
+  corr = points %>% sf::st_coordinates() %>% as.data.frame()
+  
+  newdata = rbind(data.frame(x_coor = corr$X, y_coor = corr$Y,Comparison = data.a$Comparison[1]),
+                  data.frame(x_coor = corr$X, y_coor = corr$Y,Comparison = data.a$Comparison[2]))
+  
+  newdata$file = data.a$file[1]
+  newdata$Replicate = data.a$Replicate[1]
+  
+  newdata$p = rje::expit(predict(fit,newdata = newdata,exclude = "s(file)"))
+  
+  p3 = ggplot(newdata,aes(x = x_coor,y=y_coor ,color=p)) + geom_point(size=2.2) + theme_prism(base_size=14) + annotate(geom="path",x = c(100,1800,925,100),y = c(100,100,1900,100),color="black") +scale_color_gradient2(low="forestgreen",mid="white",high="darkorchid",midpoint = 0.5) 
+
+  p.res = p2+p3
+  
+  titl = ifelse(length(unique(data.a$Group)) == 1, paste0(data.a$sex," ",data.a$Group), paste0(data.a$sex," ",data.a$Genotype))
+  
+  print(p2+p3& ggtitle(titl))
+  return(list(p.res,res))
+  
+}
+
+
+fit_within=function(data.a,BL,files){
+  ix = which(colnames(data.a) == paste0("Within",BL))
+  colnames(data.a)[ix] = "Withinx"
+  
+  if(length(files)>1){
+     f = as.formula(paste0("Withinx ~ Comparison +(1|file)+(1|Replicate) "))
+  } else {
+    f = as.formula(paste0("Withinx ~ Comparison +(1|Replicate) "))
+  }
+   
+   cts = data.frame(table(data.a$Withinx,data.a$Comparison))
+   fit = glmmTMB::glmmTMB(f ,data=data.a[data.a$file %in% files,],family = "genpois")
+   if(is.finite(summary(fit)$coeff$cond[2,2] ) ){
+   
+     res = confint(emmeans(fit,trt.vs.ctrl~Comparison))
+     sig = round(sgpv::sgpvalue( est.lo = res$contrasts$asymp.LCL,
+                     est.hi = res$contrasts$asymp.UCL,
+                     null.lo = log(0.9),
+                     null.hi = log(1.1))$p.delta,2)
+     sig.l = paste0("SGPV = ",sig)
+      
+     est = res$contrasts
+     est$sgpv = sig
+     } else {
+     est = data.frame(sgpv=0.99,estimate=0,contrast = paste0(levels(data.a$Comparison)[2]," - ",levels(data.a$Comparison)[1]))
+     sig.l = "SGPV = 0.99"
+  }
+     data.a$Withinx[data.a$Withinx>=10 ] = "10+"
+     data.a$Withinx = as.character(data.a$Withinx)
+     # 
+     # p1 = ggplot(data.a[data.a$file %in% files,],aes(x= Withinx, fill = Withinx)) + geom_bar(position = "dodge") + theme_prism(base_size = 10)  + facet_wrap(~Comparison)+
+     #   scale_fill_manual(values=colorRampPalette(c("grey80","orange2"))(20)) +
+     #   guides(fill=guide_legend(title=paste0("Flies within ", BL," body lengths")))+theme(legend.title = element_text(),legend.direction = "horizontal",legend.position = "bottom")+xlab("")+ylab("Count")+scale_y_continuous(expand=c(0,0))
+     # 
+     
+     
+     # p1 = ggplot(data.a[data.a$file %in% files,],aes(x= Withinx, fill = Comparison,alpha = Withinx)) + geom_bar(position = "dodge") + theme_prism(base_size = 10)  + facet_wrap(~Comparison)+
+     #   scale_fill_manual(values=c("forestgreen","darkorchid")) +
+     #   theme(legend.title = element_text(),legend.direction = "horizontal",legend.position = "none")+xlab("")+ylab("Count")+scale_y_continuous(expand=c(0,0))+scale_color_manual(values=c("forestgreen","darkorchid"))+xlab(paste0("Flies within ", BL," body lengths")) 
+     # 
+     
+     
+    d2 <- data.a[data.a$file %in% files,] %>%
+    group_by(Comparison, Withinx) %>%
+    summarise(count = n()) %>%
+    mutate(perc = count/sum(count))
+    
+     
+     cbar = data.frame(Comparison = levels(data.a$Comparison),perc=100,Withinx = 0)
+     
+        p1 =  ggplot(d2,aes(x= Withinx, y = 100*perc, fill = Comparison)) + geom_bar(stat="identity") + theme_prism(base_size = 10)  + facet_wrap(~Comparison) +
+       theme(legend.title = element_text(),legend.position = "right")+xlab("")+ylab("Percentage")+scale_y_continuous(expand=c(0,0))+scale_fill_manual(values=c("forestgreen","darkorchid"))+xlab("") +guides(fill = guide_legend(tilte="none"))+ylab("% Flies per Proximity Category")
+
+    p2 = ggplot(d2,aes(x= Comparison, y=100*perc,fill = Withinx)) + geom_bar(stat="identity") + theme_prism(base_size = 10)  + 
+              scale_fill_manual(values=colorRampPalette(c("grey100","grey0"))(11)) +
+       theme(legend.title = element_text(),legend.position = "right")+xlab("")+ylab("% Flies per Proximity Category")+scale_y_continuous(expand=c(0,0))+scale_color_manual(values=c("forestgreen","darkorchid"))+xlab("") +guides(alpha=guide_legend(title=paste0("Flies within ", BL," body lengths")),fill = guide_legend(title=paste0("Flies within ", BL," body lengths")))+
+      coord_cartesian(clip="off") +
+      annotate(geom="line",x = c(1,2),y=c(105,105)) +
+      annotate(geom="text",label = sig.l, x = 1.5, y = 110)+scale_y_continuous(expand=c(0,0))+
+      geom_bar(data=cbar,aes(x=Comparison,color=Comparison,y=perc),fill=NA,stat="identity",size=1)
+    
+
+    # p2 = ggplot(d2, aes(x = factor(Comparison), y = perc*100, fill = Withinx)) +
+    #   geom_bar(stat="identity", width = 0.7) +
+    #   labs(x = "", y = "Percent", fill = "Within  body lengths") +
+    #   theme_prism(base_size = 10) +scale_fill_manual(values=colorRampPalette(c("grey80","orange2"))(20)) + guides(fill=guide_legend(title=paste0("Flies within ", BL," body lengths")))+theme(legend.title = element_text(),legend.direction = "horizontal",legend.position = "bottom") +
+    #   coord_cartesian(clip="off") +
+    #   annotate(geom="line",x = c(1,2),y=c(105,105)) +
+    #   annotate(geom="text",label = sig.l, x = 1.5, y = 110)+scale_y_continuous(expand=c(0,0))
+    # 
+    if(length(unique(data.a$Comparison[data.a$file %in% files]))>2){
+       p2 =  p2+ annotate(geom="line",x = c(1,3),y=c(1.15,1.15)) +
+        annotate(geom="text",label = sig.l, x = 2, y = 1.20)
+    }
+  
+  p.w.in = p1 + p2 + plot_layout(guides = "collect") & theme(legend.position = 'bottom')
+  
+  titl = ifelse(length(unique(data.a$Group)) == 1, paste0(data.a$sex," ",data.a$Group), paste0(data.a$sex," ",data.a$Genotype))
+  
+  print(p.w.in&  ggtitle(titl))
+  return(list(p.w.in,data.frame(assay = paste0("Within ",BL," Body length") ,contrast = est$contrast, estimate = est$estimate,sgpv = est$sgpv )))
+  
+}
+
+
+
+dist.an = function(data.a,files,dist){
+  if(length(files)>1){
+    f=as.formula(paste0("log(",dist,") ~ Comparison +(1|file) + (1|Replicate)"))
+  } else {
+    f=as.formula(paste0("log(",dist,") ~ Comparison +(1|Replicate)"))
+  }
+  
+  fit = rlmer(f,data=data.a[data.a$file %in% files,])
+  res = confint(emmeans(fit,trt.vs.ctrl~Comparison))
+  sig = round(sgpv::sgpvalue( est.lo = res$contrasts$asymp.LCL,
+                   est.hi = res$contrasts$asymp.UCL,
+                   null.lo = log(0.9),
+                   null.hi = log(1.1))$p.delta,2)
+   sig.l = paste0("SGPV = ",sig)
+    
+   est = res$contrasts
+   est$sgpv = sig
+  
+   yl = case_when(dist == "av_dist" ~ "Mean distance from all other flies",
+                  dist == "dist1" ~ "Distance from nearest neighbor",
+                  dist == "dist2" ~ "Distance from second nearest neighbor",
+                  dist == "dist3" ~ "Distance from third nearest neighbor",)
+   
+   p1 = ggplot(data.a[data.a$file %in% files,],aes(x = Comparison,y = dist1,color=Comparison,shape=Replicate)) +  
+     geom_quasirandom() + theme_prism(base_size = 14) + scale_color_manual(values=c( "forestgreen",  "darkorchid")) +ylab(yl) + geom_boxplot(outlier.size = -1,fill=NA,aes(group = Comparison)) +  scale_y_continuous(trans="log2",expand=c(0,0)) +
+    annotate(geom="line",x = c(1,2),y=c(2048,2048)) +
+    annotate(geom="text",label = sig.l[1], x = 1.5, y = 2500)+coord_cartesian(clip="off")
+   if(length(unique(data.a$Comparison[data.a$file %in% files]))>2){
+     p1 =  p1+ annotate(geom="line",x = c(1,3),y=c(3200,3200)) +
+      annotate(geom="text",label = sig.l[2], x = 2, y = 3906.25)
+   }
+   
+  titl = ifelse(length(unique(data.a$Group)) == 1, paste0(data.a$sex," ",data.a$Group), paste0(data.a$sex," ",data.a$Genotype))
+  
+   print(p1&  ggtitle(titl))
+   return(list(p1,data.frame(assay = yl,contrast = est$contrast, estimate = est$estimate,sgpv = est$sgpv)))
+   
+}
+
+
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+
+```
+
+### Primary Screen
+
+
+```{r}
+
+convert = read_excel("~/bbc-secondary/research/LEMH_Ellen_Fly_Shiny/Social Distance Assay/screen_gene_names.xlsx")
+
+files = list.files("~/bbc-secondary/research/LEMH_Ellen_Fly_Shiny/Social Distance Assay/primary_screen/")
+df=NULL
+for(i in files){
+  tmp = read_excel(paste0("~/bbc-secondary/research/LEMH_Ellen_Fly_Shiny/Social Distance Assay/primary_screen/",i))
+  tmp$file = i
+  df = rbind(df,tmp)
+}
+
+df$file = as.factor(df$file)
+df$Group =  unlist(lapply(strsplit(df$condition," "), function(x) x[[1]]))
+df$Genotype =  unlist(lapply(strsplit(df$condition," "), function(x) x[[2]]))
+df$sex =  unlist(lapply(strsplit(df$condition," "), function(x) x[[3]]))
+df$Replicate = unlist(lapply(strsplit(df$condition," "), function(x) x[[4]]))
+df$ID = as.factor(paste0(df$file,df$condition))
+df$Genotype.b = ifelse(df$Genotype == "WT",0,1)
+df$Replicate = as.factor(df$Replicate)
+df$condition = as.factor(gsub(" ","",df$condition))
+
+## Number of flies per body length
+m.bl = sqrt(mean(df$areas[df$sex == "male" & df$areas<200])/base::pi)*2
+f.bl = sqrt(mean(df$areas[df$sex == "female"& df$areas<200])/base::pi)*2
+
+within.fx = function(id){
+  tmp = df[df$ID ==id,]
+  
+  tmp.d=as.matrix(dist(subset(tmp,select=c(x_coor,y_coor)),upper=T))
+  bl = ifelse(tmp$sex[1] == "female",f.bl,m.bl)
+  tmp$Within1 =  apply(tmp.d,2, function(x){ sum(I(x < bl & x > 0 )) } )
+  tmp$Within2 =  apply(tmp.d,2, function(x){ sum(I(x < 2*bl & x > 0 )) } )
+  tmp$Within3 =  apply(tmp.d,2, function(x){ sum(I(x < 3*bl & x > 0 )) } )
+  tmp$Within4 =  apply(tmp.d,2, function(x){ sum(I(x < 4*bl & x > 0 )) } )
+ 
+  return(tmp)
+   
+}
+
+df = rbindlist(lapply(unique(df$ID), function(x) within.fx(x)))
+
+df$Genotype[df$Genotype != "WT"] = convert$`Drosophila Ortholog`[match(df$Genotype[df$Genotype != "WT"],convert$`Bloomington Number`)]
+
+
+```
+
+### Comparing Genotypes {.tabset}
+#### HGD {.tabset}
+
+
+```{r}
+
+gns = unique(df$Genotype[df$Genotype != "WT"])
+
+#We need avg dist, flies within 2, and 4; and finally spatial
+run_all = function(sex,group){
+  s=sex
+  gp=group
+  # Spatial analyses saved for another day
+  # sp.res = NULL
+  res = NULL
+  for(i in 1:length(gns)){
+    g = gns[i]
+    df$Comparison = df$Genotype
+    fl = unique(df$file[which(df$Genotype == g)])
+    data.tmp = df[df$Group == gp & df$sex==s  & df$file %in% fl & df$Genotype %in% c("WT",g) ,]
+    
+    data.tmp$Comparison = factor(data.tmp$Comparison,levels=c("WT",g))
+  
+    if(length(unique(data.tmp$Replicate))<2){
+      print(paste0(g, "Only has 1 replicate"))
+    } else{ 
+      # Spatial analyses saved for another day
+      # sp.res = rbind(sp.res,data.frame(assay = "Spatial",Comparison = paste0(g," v WT"),p = suppressWarnings( suppressMessages( fit_geno_gams(data.tmp,fl)[[2]]))))
+      
+      res = rbind(res,suppressWarnings( suppressMessages( fit_within(data.tmp,2,fl)[[2]])))
+      res = rbind(res,suppressWarnings( suppressMessages( fit_within(data.tmp,3,fl)[[2]])))
+      res = rbind(res,suppressWarnings( suppressMessages( fit_within(data.tmp,4,fl)[[2]])))
+      
+      res = rbind(res,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"av_dist")[[2]])))
+      res = rbind(res,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist1")[[2]])))
+      res = rbind(res,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist2")[[2]])))
+      res = rbind(res,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist3")[[2]])))
+    }
+  }
+  
+  res$Group = paste0(sex," ", group)
+  # sp.res$Group = paste0(sex," ", group)
+  return(list(res))
+}
+```
+
+##### Males
+
+```{r}
+HGDM = run_all("male","HGD")
+```
+
+##### Females
+
+```{r}
+
+HGDF = run_all("female","HGD")
+
+```
+
+#### MGD {.tabset}
+##### Males
+
+```{r}
+
+MGDM = run_all("male","MGD")
+```
+
+##### Females
+
+
+```{r}
+
+MGDF = run_all("female","MGD")
+
+```
+
+#### Heatmaps {.tabset}
+
+##### Estimates
+
+```{r, fig.height= 35,fig.width=12}
+
+geno.c = rbind(HGDM[[1]],HGDF[[1]],MGDM[[1]],MGDF[[1]])
+
+ggplot(geno.c,aes(x=Group,y=contrast,fill=estimate))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0,limits=c(-2.01,2.01))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+ 
+
+```
+
+
+##### SGPV
+
+```{r, fig.height= 35,fig.width=12}
+
+ggplot(geno.c,aes(x=Group,y=contrast,fill=sgpv))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_gradient2(low="darkred",mid="white",high="black",midpoint=0.5,limits=c(-0.01,1.01),n.breaks = 7 )+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+
+
+```
+
+##### Summary Heatmap
+
+
+```{r, fig.height= 35,fig.width=12}
+
+geno.c$Result = case_when(geno.c$sgpv == 0 & geno.c$estimate <0 ~"Sig Decrease",
+                          geno.c$sgpv == 0 & geno.c$estimate >0 ~"Sig Increase",
+                          geno.c$sgpv == 1 ~"Equivalent",
+                          TRUE~"Inconclusive")
+
+ggplot(geno.c,aes(x=Group,y=contrast,fill=Result))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_manual(values = c("Equivalent" = "black","Inconclusive" = "white", "Sig Increase" = "red", "Sig Decrease" = "blue"))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          axis.text.x = element_text(angle=45,hjust=1))
+
+
+
+```
+
+##### Spatial Results
+
+Pulled for now
+
+```{r, fig.height= 16,fig.width=5}
+# 
+# geno.sp = rbind(HGDM[[2]],HGDF[[2]],MGDM[[2]],MGDF[[2]])
+# geno.sp$FDR = p.adjust(geno.sp$p,method="BH")
+# 
+# geno.sp$label = ifelse(geno.sp$FDR<0.05,"Significant","NS")
+# ggplot(geno.sp,aes(x=Group,y=Comparison,fill=label))+
+#     geom_tile(color="black") + theme_classic() + xlab("") + ylab("") +
+#     scale_fill_manual(values=c("Significant" = "darkred","NS"="white"))+  
+#     theme(strip.background = element_blank(),
+#           axis.line.x = element_blank(),
+#           axis.line.y = element_blank(),
+#           legend.position="top",
+#           legend.key.width=unit(4,"cm"),
+#           axis.text.x = element_text(angle=45,hjust=1),
+#           legend.title = element_blank())
+
+```
+
+
+### Comparing MGD and HGD within each genotype {.tabset}
+
+
+
+```{r}
+
+run_groups = function(sex){
+  s=sex
+  # Spatial analyses saved for another day
+  # sp.res = NULL
+  res = NULL
+  for(i in 1:length(gns)){
+    g = gns[i]
+    df$Comparison = df$Group
+    fl = unique(df$file[which(df$Genotype == g)])
+    data.tmp = df[ df$sex==s  & df$file %in% fl & df$Genotype == g ,]
+    
+    data.tmp$Comparison = factor(data.tmp$Comparison)
+  
+    if(length(unique(data.tmp$Replicate))<2){
+      print(paste0(g, "Only has 1 replicate"))
+    } else{ 
+      # Spatial analyses saved for another day
+      # sp.res = rbind(sp.res,data.frame(assay = "Spatial",Comparison = paste0(g," v WT"),p = suppressWarnings( suppressMessages( fit_geno_gams(data.tmp,fl)[[2]]))))
+      
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( fit_within(data.tmp,2,fl)[[2]]))))
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( fit_within(data.tmp,3,fl)[[2]]))))
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( fit_within(data.tmp,4,fl)[[2]]))))
+      
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"av_dist")[[2]]))))
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist1")[[2]]))))
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist2")[[2]]))))
+      res = rbind(res,data.frame(Genotype=g,suppressWarnings( suppressMessages( dist.an(data.tmp,fl,"dist3")[[2]]))))
+      
+    }
+        
+
+  }
+  
+  res$Group = sex
+  # sp.res$Group = paste0(sex," ", group)
+  return(list(res))
+}
+```
+
+#### Males
+
+```{r}
+M.res = run_groups("male")
+
+```
+
+
+#### Females
+
+```{r}
+F.res = run_groups("female")
+
+```
+
+
+#### Heatmaps
+
+```{r fig.height=40}
+
+group.c = rbind(M.res[[1]],F.res[[1]])
+group.c$Group = paste0(group.c$Group," ",group.c$Genotype)
+
+ggplot(group.c,aes(y=Group,x=contrast,fill=estimate))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0,limits=c(-2.01,2.01))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+ 
+
+```
+
+
+##### SGPV
+
+```{r, fig.height= 40,fig.width=12}
+
+ggplot(group.c,aes(y=Group,x=contrast,fill=sgpv))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_gradient2(low="darkred",mid="white",high="black",midpoint=0.5,limits=c(-0.01,1.01),n.breaks = 7 )+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          legend.key.width=unit(4,"cm"),
+          axis.text.x = element_text(angle=45,hjust=1))
+
+
+```
+
+##### Summary Heatmap
+
+
+```{r, fig.height= 40,fig.width=12}
+
+group.c$Result = case_when(group.c$sgpv == 0 & group.c$estimate <0 ~"Sig Decrease",
+                          group.c$sgpv == 0 & group.c$estimate >0 ~"Sig Increase",
+                          group.c$sgpv == 1 ~"Equivalent",
+                          TRUE~"Inconclusive")
+
+ggplot(group.c,aes(y=Group,x=contrast,fill=Result))+
+    facet_wrap(~assay,ncol=4)+
+    geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
+    scale_fill_manual(values = c("Equivalent" = "black","Inconclusive" = "white", "Sig Increase" = "red", "Sig Decrease" = "blue"))+  
+    theme(strip.background = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.position="top",
+          axis.text.x = element_text(angle=45,hjust=1))
+
+
+
+```
+
