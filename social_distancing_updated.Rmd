@@ -448,6 +448,8 @@ Pulled for now
 
 ```{r}
 
+df$Group = factor(df$Group,levels=c("MGD","HGD"))
+
 run_groups = function(sex){
   s=sex
   # Spatial analyses saved for another day
@@ -511,9 +513,9 @@ group.c = rbind(M.res[[1]],F.res[[1]])
 group.c$Group = paste0(group.c$Group," ",group.c$Genotype)
 
 ggplot(group.c,aes(y=Group,x=contrast,fill=estimate))+
-    facet_wrap(~assay,ncol=4)+
+    facet_wrap(~assay,ncol=4, labeller = label_wrap_gen())+
     geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
-    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0,limits=c(-2.01,2.01))+  
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0,limits=c(-2.01,2.01))+  ggtitle(group.c$contrast[1]) +
     theme(strip.background = element_blank(),
           axis.line.x = element_blank(),
           axis.line.y = element_blank(),
@@ -530,9 +532,9 @@ ggplot(group.c,aes(y=Group,x=contrast,fill=estimate))+
 ```{r, fig.height= 40,fig.width=12}
 
 ggplot(group.c,aes(y=Group,x=contrast,fill=sgpv))+
-    facet_wrap(~assay,ncol=4)+
+    facet_wrap(~assay,ncol=4, labeller = label_wrap_gen())+
     geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
-    scale_fill_gradient2(low="darkred",mid="white",high="black",midpoint=0.5,limits=c(-0.01,1.01),n.breaks = 7 )+  
+    scale_fill_gradient2(low="darkred",mid="white",high="black",midpoint=0.5,limits=c(-0.01,1.01),n.breaks = 7 )+  ggtitle(group.c$contrast[1]) +
     theme(strip.background = element_blank(),
           axis.line.x = element_blank(),
           axis.line.y = element_blank(),
@@ -554,7 +556,8 @@ group.c$Result = case_when(group.c$sgpv == 0 & group.c$estimate <0 ~"Sig Decreas
                           TRUE~"Inconclusive")
 
 ggplot(group.c,aes(y=Group,x=contrast,fill=Result))+
-    facet_wrap(~assay,ncol=4)+
+    facet_wrap(~assay,ncol=4, labeller = label_wrap_gen())+
+    ggtitle(group.c$contrast[1]) +
     geom_tile(color="black") + theme_classic(16) + xlab("") + ylab("") +
     scale_fill_manual(values = c("Equivalent" = "black","Inconclusive" = "white", "Sig Increase" = "red", "Sig Decrease" = "blue"))+  
     theme(strip.background = element_blank(),
